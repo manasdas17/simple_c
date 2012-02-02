@@ -1,0 +1,3 @@
+def tokenize(buffer):
+	for char in buffer:
+		if is_identifier(token
