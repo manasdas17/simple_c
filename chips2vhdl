@@ -1,0 +1,90 @@
+#!/usr/bin/env python
+
+__author__ = "Jon Dawson"
+__copyright__ = "Copyright 2010, Jonathan P Dawson"
+__license__ = "MIT"
+__version__ = "0.1.3"
+__maintainer__ = "Jon Dawson"
+__email__ = "chips@jondawson.org.uk"
+__status__ = "Prototype"
+
+import sys
+import compiler
+import chips
+
+def show_help_message():
+    print """
+chips2vhdl
+==========
+
+chips to vhdl converter.
+
+usage
+-----
+
+chips2vhdl [--sim | --synth | --help] <input_file>
+
+options: 
+	--sim		Generate a complete test bench including clock
+			and reset. (Non synthesiseable)
+
+	--synth         Generate only the chips, suitable for synthesis
+
+	--help          Print this help message
+
+	--version       print versions
+
+"""
+    exit(0)
+
+mode = "help"
+
+for arg in sys.argv[1:]:
+    if arg == "--sim":
+        mode = "simulation"
+    elif arg == "--synth":
+        mode = "synthesis"
+    elif arg == "help":
+        show_help_message()
+    elif arg == "--tree":
+        mode = "tree"
+    elif arg == "--version":
+        print "chips version:", chips.__version__
+        exit(0)
+    else:
+        input_file = arg
+
+if mode == "simulation":
+
+    from chips.VHDL_plugin import Plugin
+    input_file = open(input_file, 'r')
+    input_file = input_file.read()
+    plugin = Plugin(internal_clock = True, internal_reset = True)
+    parser = compiler.Parser()
+    chip = parser.parse(input_file)
+    chip.write_code(plugin)
+
+elif mode == "synthesis":
+
+    from chips.VHDL_plugin import Plugin
+    input_file = open(input_file, 'r')
+    input_file = input_file.read()
+    plugin = Plugin()
+    parser = compiler.Parser()
+    chip = parser.parse(input_file)
+    chip.write_code(plugin)
+
+elif mode == "tree":
+
+    from chips.VHDL_plugin import Plugin
+    input_file = open(input_file, 'r')
+    input_file = input_file.read()
+    plugin = Plugin()
+    parser = compiler.Parser()
+    chip = parser.parse(input_file)
+    print chip
+
+else:
+    show_help_message()
+
+

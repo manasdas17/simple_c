@@ -1,452 +1,434 @@
 import chips
+from tokenize import tokenize, check_token, expect_token
 
-operators = ["=", "==", "<", ">", ">=", "<=", "<<", ">>", "(", ")", "+", "-", "*", "//", "~", "&", "|", "^", ":"]
+sinks = {
+    "port" : chips.OutPort,
+    "console" : chips.Console,
+    "serial" : chips.SerialOut,
+    "assert" : chips.Asserter,
+}
 
-def tokenize(string):
-    token = ""
-    tokens = []
-    indentation_level_stack = [1]
+sink_usage = {
+    "port"    : "output <stream> : port <name>",
+    "console" : "output <stream> : console",
+    "serial"  : "output <stream> : serial [<name> [, <clock rate> [, <baud rate>]]])",
+    "assert"  : "output <stream> : assert",
+}
 
-    for char in string:
-        if not token:
-            token = char
+builtins = {
+    "serial" : chips.SerialIn,
+    "port" : chips.InPort,
+}
 
-        #white space
-        elif token.isspace():
-            if char.isspace():
-                token += char
+usage = {
+    "port" : "port(<name>, <bits>)",
+}
+
+
+class Parser:
+
+    def parse(self, string):
+        self.streams = {}
+        self._locals = {}
+        self.sinks = {}
+        self.tokens = tokenize(string)
+        print self.tokens
+
+        while self.tokens:
+            if check_token(self.tokens, "process"):
+                self.parse_process()
+            elif check_token(self.tokens, "output"):
+                self.parse_sink()
             else:
-                #count indentation
-                if token.startswith("\n") or token.startswith("\r"):
-                    tokens.append("end of line")
-                    indentation_level = len(token.expandtabs())
-                    if indentation_level > indentation_level_stack[-1]:
-                        tokens.append("indent")
-                        indentation_level_stack.append(indentation_level)
-                    elif indentation_level < indentation_level_stack[-1]:
-                        while indentation_level < indentation_level_stack[-1]:
-                            indentation_level_stack.pop()
-                            tokens.append("dedent")
-                token = char
+                self.parse_connection()
 
-        #identifier
-        elif token[0].isalpha():
-            if char.isalnum() or char == "_":
-                token += char
+        return chips.Chip(*self.sinks.values())
+
+    def parse_sink(self):
+        expect_token(self.tokens, "output")
+        stream = self.parse_expression()
+        expect_token(self.tokens, ":")
+        sink = self.tokens.pop(0)
+        parameters = [stream]
+        while True:
+            parameters.append(self.parse_expression())
+            if check_token(self.tokens, ","):
+                expect_token(self.tokens, ",")
             else:
-                tokens.append(token)
-                token = char
+                break
+        expect_token(self.tokens, "end of line")
+        try:
+            self.sinks[sink] = sinks[sink](*parameters)
+        except TypeError:
+            print "Incorrect use of", sink
+            print "Usage: ", sink_usage[sink]
+        except KeyError:
+            print "unknown output type", sink
 
-        #number
-        elif token[0].isdigit():
-            if char.isdigit() or char in [".", "x", "X"]:
-                token += char
-            else:
-                tokens.append(token)
-                token = char
+    def parse_connection(self):
+        target_name = self.tokens.pop(0)
+        expect_token(self.tokens, "<=")
+        expression = self.parse_expression()
+        expect_token(self.tokens, "end of line")
+        self.streams[target_name] = expression
 
-        #operator
-        elif token in operators:
-            if token + char in operators:
-                token += char
-            else:
-                tokens.append(token)
-                token = char
+    def parse_process(self):
+        self._locals = {}
+        self.process_bits = 0
 
-        #comment
-        elif token[0] == "#":
-            if char not in ["\n", "\r\n" "\r"]:
-                token += char
-            else:
-                tokens.append(token)
-                token = char
+        expect_token(self.tokens, "process")
+        expect_token(self.tokens, ":")
+        expect_token(self.tokens, "end of line")
+        expect_token(self.tokens, "indent")
+        statements = []
+        while not check_token(self.tokens, "dedent"):
+            statements.append(self.parse_statement())
+        expect_token(self.tokens, "dedent")
+        chips.Process(32, *statements)
 
-    tokens.append("end of line")
-    for i in indentation_level_stack:
-        if i > 1:
-            tokens.append("dedent")
-
-    return tokens
-
-def check_token(tokens, token):
-    if tokens and tokens[0] == token:
-        return True
-    else:
-        return False
-
-def expect_token(tokens, token):
-    if tokens and tokens[0] == token:
-        tokens.pop(0)
-    else:
-        print "Error expected:", token, "got:", tokens[0]
-        exit(0)
-
-def parse(string):
-    variables = {}
-    inputs = {}
-    outputs = {}
-    process_bits = 0
-
-    def parse_statement(tokens):
-        if check_token(tokens, "if"):
-            return parse_if(tokens)
-        elif check_token(tokens, "loop"):
-            return parse_loop(tokens)
-        elif check_token(tokens, "while"):
-            return parse_while(tokens)
-        elif check_token(tokens, "until"):
-            return parse_until(tokens)
-        elif check_token(tokens, "pass"):
-            return parse_pass(tokens)
-        elif check_token(tokens, "break"):
-            return parse_break(tokens)
-        elif check_token(tokens, "continue"):
-            return parse_continue(tokens)
-        elif check_token(tokens, "waitus"):
-            return parse_waitus(tokens)
-        elif check_token(tokens, "read"):
-            return parse_read(tokens)
-        elif check_token(tokens, "write"):
-            return parse_write(tokens)
-        elif check_token(tokens, "print"):
-            return parse_print(tokens)
-        elif check_token(tokens, "variable"):
-            return parse_variable_declare(tokens)
-        elif check_token(tokens, "input"):
-            return parse_input_declare(tokens)
-        elif check_token(tokens, "output"):
-            return parse_output_declare(tokens)
-        elif tokens[0][0].isalpha():
-            return parse_assignment(tokens)
+    def parse_statement(self):
+        if check_token(self.tokens, "if"):
+            return self.parse_if()
+        elif check_token(self.tokens, "loop"):
+            return self.parse_loop()
+        elif check_token(self.tokens, "while"):
+            return self.parse_while()
+        elif check_token(self.tokens, "until"):
+            return self.parse_until()
+        elif check_token(self.tokens, "pass"):
+            return self.parse_pass()
+        elif check_token(self.tokens, "break"):
+            return self.parse_break()
+        elif check_token(self.tokens, "continue"):
+            return self.parse_continue()
+        elif check_token(self.tokens, "waitus"):
+            return self.parse_waitus()
+        elif check_token(self.tokens, "read"):
+            return self.parse_read()
+        elif check_token(self.tokens, "write"):
+            return self.parse_write()
+        elif check_token(self.tokens, "print"):
+            return self.parse_print()
+        elif self.tokens[0][0].isalpha():
+            return self.parse_assignment()
         else:
-            print tokens
+            print self.tokens
 
-    def parse_input_declare(tokens):
-        expect_token(tokens, "input")
-        input_ = tokens.pop(0)
-        expect_token(tokens, ":")
-        type_ = tokens.pop(0)
-        bits = int(parse_expression(tokens))
-        expect_token(tokens, "bits")
-        expect_token(tokens, "end of line")
+    def parse_pass(self):
+        expect_token(self.tokens, "pass")
+        expect_token(self.tokens, "end of line")
 
-    def parse_output_declare(tokens):
-        expect_token(tokens, "output")
-        output = tokens.pop(0)
-        expect_token(tokens, ":")
-        type_ = tokens.pop(0)
-        bits = int(parse_expression(tokens))
-        expect_token(tokens, "bits")
-        expect_token(tokens, "end of line")
-        outputs[output] = chips.Output()
-
-    def parse_variable_declare(tokens):
-        expect_token(tokens, "variable")
-        variable = tokens.pop(0)
-        expect_token(tokens, ":")
-        type_ = tokens.pop(0)
-        bits = int(parse_expression(tokens))
-        expect_token(tokens, "bits")
-        initial_value = 0
-        #if check_token(tokens, "="):
-        #    expect_token(tokens, "=")
-       #     initial_value = int(parse_expression(tokens))
-        expect_token(tokens, "end of line")
-        variables[variable] = chips.Variable(initial_value)
-
-    def parse_pass(tokens):
-        expect_token(tokens, "pass")
-        expect_token(tokens, "end of line")
-
-    def parse_break(tokens):
-        expect_token(tokens, "break")
-        expect_token(tokens, "end of line")
+    def parse_break(self):
+        expect_token(self.tokens, "break")
+        expect_token(self.tokens, "end of line")
         return chips.Break()
 
-    def parse_continue(tokens):
-        expect_token(tokens, "continue")
-        expect_token(tokens, "end of line")
+    def parse_continue(self):
+        expect_token(self.tokens, "continue")
+        expect_token(self.tokens, "end of line")
         return chips.Continue()
 
-    def parse_waitus(tokens):
-        expect_token(tokens, "waitus")
-        expect_token(tokens, "end of line")
+    def parse_waitus(self):
+        expect_token(self.tokens, "waitus")
+        expect_token(self.tokens, "end of line")
         return chips.WaitUs()
 
-    def parse_read(tokens):
-        expect_token(tokens, "read")
-        in_ = tokens.pop(0)
-        var = tokens.pop(0)
-        if var not in variables:
-            variable[var] = Variable(0)
-        if in_ not in inputs:
-            inputs[in_] = chips.Output()
-        expect_token(tokens, "end of line")
-        try:
-            return inputs[in_].read(variables[var])
-        except KeyError:
-            print "unknown input", in_
+    def parse_read(self):
+        expect_token(self.tokens, "read")
+        in_ = self.tokens.pop(0)
+        var = self.tokens.pop(0)
+        if var not in self._locals:
+            self._locals[var] = Variable(0)
+        if _in not in self.streams:
+            print "unknown stream", _in
+        expect_token(self.tokens, "end of line")
+        self.tagets[_in] = self.streams[_in]
+        return self.streams[_in]
 
-    def parse_write(tokens):
-        expect_token(tokens, "write")
-        out_ = tokens.pop(0)
-        expression = parse_expression(tokens)
-        expect_token(tokens, "end of line")
-        try:
-            return outputs[out_].write(expression)
-        except KeyError:
-            print "unknown output", out_
+    def parse_write(self):
+        expect_token(self.tokens, "write")
+        out_ = self.tokens.pop(0)
+        expression = self.parse_expression()
+        expect_token(self.tokens, "end of line")
+        if _out not in self.streams:
+            self.streams[_out] = chips.Output()
+        return self.streams[out_].write(expression)
 
-    def parse_print(tokens):
-        expect_token(tokens, "print")
-        out_ = tokens.pop(0)
-        expression = parse_expression(tokens)
-        expect_token(tokens, "end of line")
+    def parse_print(self):
+        expect_token(self.tokens, "print")
+        out_ = self.tokens.pop(0)
+        expression = self.parse_expression()
+        expect_token(self.tokens, "end of line")
         return chips.Print(outputs[out_], expression)
 
-    def parse_if(tokens):
+    def parse_if(self):
 
         #if statement
-        expect_token(tokens, "if")
-        expression = parse_expression(tokens)
-        expect_token(tokens, ":")
-        expect_token(tokens, "end of line")
-        expect_token(tokens, "indent")
-        statements = [parse_statement(tokens)]
-        while not check_token(tokens, "dedent"):
-            statements.append(parse_statement(tokens))
-        expect_token(tokens, "dedent")
+        expect_token(self.tokens, "if")
+        expression = self.parse_expression()
+        expect_token(self.tokens, ":")
+        expect_token(self.tokens, "end of line")
+        expect_token(self.tokens, "indent")
+        statements = [self.parse_statement()]
+        while not check_token(self.tokens, "dedent"):
+            statements.append(self.parse_statement())
+        expect_token(self.tokens, "dedent")
         statement = chips.If(expression, *statements)
 
         #elif statement
-        while check_token(tokens, "elif"):
-            expect_token(tokens, "elif")
-            expression = parse_expression(tokens)
-            expect_token(tokens, ":")
-            expect_token(tokens, "end of line")
-            expect_token(tokens, "indent")
-            statements = [parse_statement(tokens)]
-            while not check_token(tokens, "dedent"):
-                statements.append(parse_statement(tokens))
-            expect_token(tokens, "dedent")
+        while check_token(self.tokens, "elif"):
+            expect_token(self.tokens, "elif")
+            expression = self.parse_expression()
+            expect_token(self.tokens, ":")
+            expect_token(self.tokens, "end of line")
+            expect_token(self.tokens, "indent")
+            statements = [self.parse_statement()]
+            while not check_token(self.tokens, "dedent"):
+                statements.append(self.parse_statement())
+            expect_token(self.tokens, "dedent")
             statement = statement.Elif(expression, *statements)
 
         #else statement
-        if check_token(tokens, "else"):
-            expect_token(tokens, "else")
-            expect_token(tokens, ":")
-            expect_token(tokens, "end of line")
-            expect_token(tokens, "indent")
-            statements = [parse_statement(tokens)]
-            while not check_token(tokens, "dedent"):
-                statements.append(parse_statement(tokens))
-            expect_token(tokens, "dedent")
+        if check_token(self.tokens, "else"):
+            expect_token(self.tokens, "else")
+            expect_token(self.tokens, ":")
+            expect_token(self.tokens, "end of line")
+            expect_token(self.tokens, "indent")
+            statements = [self.parse_statement()]
+            while not check_token(self.tokens, "dedent"):
+                statements.append(self.parse_statement())
+            expect_token(self.tokens, "dedent")
             statement = statement.Else(*statements)
 
         return statement
 
-    def parse_loop(tokens):
+    def parse_loop(self):
 
         #loop statement
-        expect_token(tokens, "loop")
-        expect_token(tokens, ":")
-        expect_token(tokens, "end of line")
-        expect_token(tokens, "indent")
-        statements = [parse_statement(tokens)]
-        while not check_token(tokens, "dedent"):
-            statements.append(parse_statement(tokens))
-        expect_token(tokens, "dedent")
+        expect_token(self.tokens, "loop")
+        expect_token(self.tokens, ":")
+        expect_token(self.tokens, "end of line")
+        expect_token(self.tokens, "indent")
+        statements = [self.parse_statement()]
+        while not check_token(self.tokens, "dedent"):
+            statements.append(self.parse_statement())
+        expect_token(self.tokens, "dedent")
         statement = chips.Loop(*statements)
         return statement
 
-    def parse_while(tokens):
+    def parse_while(self):
 
-        #whil statement
-        expect_token(tokens, "while")
-        expression = parse_expression(tokens)
-        expect_token(tokens, ":")
-        expect_token(tokens, "end of line")
-        expect_token(tokens, "indent")
-        statements = [parse_statement(tokens)]
-        while not check_token(tokens, "dedent"):
-            statements.append(parse_statement(tokens))
-        expect_token(tokens, "dedent")
+        #while statement
+        expect_token(self.tokens, "while")
+        expression = self.parse_expression()
+        expect_token(self.tokens, ":")
+        expect_token(self.tokens, "end of line")
+        expect_token(self.tokens, "indent")
+        statements = [self.parse_statement()]
+        while not check_token(self.tokens, "dedent"):
+            statements.append(self.parse_statement())
+        expect_token(self.tokens, "dedent")
         statement = chips.While(expression, *statements)
         return statement
 
-    def parse_until(tokens):
+    def parse_until(self):
 
-        #whil statement
-        expect_token(tokens, "until")
-        expression = parse_expression(tokens)
-        expect_token(tokens, ":")
-        expect_token(tokens, "end of line")
-        expect_token(tokens, "indent")
-        statements = [parse_statement(tokens)]
-        while not check_token(tokens, "dedent"):
-            statements.append(parse_statement(tokens))
-        expect_token(tokens, "dedent")
+        #until statement
+        expect_token(self.tokens, "until")
+        expression = self.parse_expression()
+        expect_token(self.tokens, ":")
+        expect_token(self.tokens, "end of line")
+        expect_token(self.tokens, "indent")
+        statements = [self.parse_statement()]
+        while not check_token(self.tokens, "dedent"):
+            statements.append(self.parse_statement())
+        expect_token(self.tokens, "dedent")
         statement = chips.Until(expression, *statements)
         return statement
 
-    def parse_assignment(tokens):
-        variable = tokens.pop(0)
-        expect_token(tokens, "=")
-        expression = parse_expression(tokens)
-        expect_token(tokens, "end of line")
-        return variables[variable].set(expression)
+    def parse_assignment(self):
 
-    def parse_expression(tokens):
-        if check_token(tokens, "not"):
-            tokens.pop(0)
-            return chips.Not(parse_comparison(tokens))
+        variable = self.tokens.pop(0)
+        expect_token(self.tokens, "=")
+        expression = self.parse_expression()
+        expect_token(self.tokens, "end of line")
+        if variable not in self._locals:
+            self._locals[variable] = Variable(0)
+        return self._locals[variable].set(expression)
+
+    def parse_expression(self):
+
+        if check_token(self.tokens, "not"):
+            self.tokens.pop(0)
+            return chips.Not(self.parse_comparison())
         else:
-            return parse_comparison(tokens)
+            return self.parse_comparison()
 
-    def parse_comparison(tokens):
-        expression = parse_or_expression(tokens)
-        if check_token(tokens, ">"):
-            tokens.pop(0)
-            return expression > parse_or_expression(tokens)
-        elif check_token(tokens, "<"):
-            tokens.pop(0)
-            return expression < parse_or_expression(tokens)
-        elif check_token(tokens, "<="):
-            tokens.pop(0)
-            return expression <= parse_or_expression(tokens)
-        elif check_token(tokens, ">="):
-            tokens.pop(0)
-            return expression >= parse_or_expression(tokens)
-        elif check_token(tokens, "=="):
-            tokens.pop(0)
-            return expression == parse_or_expression(tokens)
-        elif check_token(tokens, "!="):
-            tokens.pop(0)
-            return expression != parse_or_expression(tokens)
-        else:
-            return expression
+    def parse_comparison(self):
 
-    def parse_or_expression(tokens):
-        expression = parse_xor_expression(tokens)
-        if check_token(tokens, "|"):
-            tokens.pop(0)
-            return expression | parse_xor_expression(tokens)
+        expression = self.parse_or_expression()
+        if check_token(self.tokens, ">"):
+            self.tokens.pop(0)
+            return expression > self.parse_or_expression()
+        elif check_token(self.tokens, "<"):
+            self.tokens.pop(0)
+            return expression < self.parse_or_expression()
+        elif check_token(self.tokens, "<="):
+            self.tokens.pop(0)
+            return expression <= self.parse_or_expression()
+        elif check_token(self.tokens, ">="):
+            self.tokens.pop(0)
+            return expression >= self.parse_or_expression()
+        elif check_token(self.tokens, "=="):
+            self.tokens.pop(0)
+            return expression == self.parse_or_expression()
+        elif check_token(self.tokens, "!="):
+            self.tokens.pop(0)
+            return expression != self.parse_or_expression()
         else:
             return expression
 
-    def parse_xor_expression(tokens):
-        expression = parse_and_expression(tokens)
-        if check_token(tokens, "^"):
-            tokens.pop(0)
-            return expression ^ parse_and_expression(tokens)
+    def parse_or_expression(self):
+
+        expression = self.parse_xor_expression()
+        if check_token(self.tokens, "|"):
+            self.tokens.pop(0)
+            return expression | self.parse_xor_expression()
         else:
             return expression
 
-    def parse_and_expression(tokens):
-        expression = parse_shift_expression(tokens)
-        if check_token(tokens, "&"):
-            tokens.pop(0)
-            return expression & parse_shift_expression(tokens)
+    def parse_xor_expression(self):
+
+        expression = self.parse_and_expression()
+        if check_token(self.tokens, "^"):
+            self.tokens.pop(0)
+            return expression ^ self.parse_and_expression()
         else:
             return expression
 
-    def parse_shift_expression(tokens):
-        expression = parse_arithmetic_expression(tokens)
-        if check_token(tokens, "<<"):
-            tokens.pop(0)
-            return expression << parse_arithmetic_expression(tokens)
-        elif check_token(tokens, ">>"):
-            tokens.pop(0)
-            return expression >> parse_arithmetic_expression(tokens)
+    def parse_and_expression(self):
+
+        expression = self.parse_shift_expression()
+        if check_token(self.tokens, "&"):
+            self.tokens.pop(0)
+            return expression & self.parse_shift_expression()
         else:
             return expression
 
-    def parse_arithmetic_expression(tokens):
-        expression = parse_mult_expression(tokens)
-        if check_token(tokens, "+"):
-            tokens.pop(0)
-            return expression + parse_mult_expression(tokens)
-        elif check_token(tokens, "-"):
-            tokens.pop(0)
-            return expression - parse_mult_expression(tokens)
+    def parse_shift_expression(self):
+
+        expression = self.parse_arithmetic_expression()
+        if check_token(self.tokens, "<<"):
+            self.tokens.pop(0)
+            return expression << self.parse_arithmetic_expression()
+        elif check_token(self.tokens, ">>"):
+            self.tokens.pop(0)
+            return expression >> self.parse_arithmetic_expression()
         else:
             return expression
 
-    def parse_mult_expression(tokens):
-        expression = parse_unary_expression(tokens)
-        if check_token(tokens, "*"):
-            tokens.pop(0)
-            return expression * parse_unary_expression(tokens)
-        elif check_token(tokens, "//"):
-            tokens.pop(0)
-            return expression // parse_unary_expression(tokens)
+    def parse_arithmetic_expression(self):
+
+        expression = self.parse_mult_expression()
+        if check_token(self.tokens, "+"):
+            self.tokens.pop(0)
+            return expression + self.parse_mult_expression()
+        elif check_token(self.tokens, "-"):
+            self.tokens.pop(0)
+            return expression - self.parse_mult_expression()
         else:
             return expression
 
-    def parse_unary_expression(tokens):
-        if check_token(tokens, "-"):
-            tokens.pop(0)
-            return 0 - parse_paren_expression(tokens)
-        elif check_token(tokens, "+"):
-            tokens.pop(0)
-            return 0 + parse_paren_expression(tokens)
-        elif check_token(tokens, "~"):
-            tokens.pop(0)
-            return ~parse_paren_expression(tokens)
-        else:
-            return parse_paren_expression(tokens)
+    def parse_mult_expression(self):
 
-    def parse_paren_expression(tokens):
-        if check_token(tokens, "("):
-            expect_token(tokens, "(")
-            expression = parse_expression(tokens)
-            expect_token(tokens, ")")
+        expression = self.parse_unary_expression()
+        if check_token(self.tokens, "*"):
+            self.tokens.pop(0)
+            return expression * self.parse_unary_expression()
+        elif check_token(self.tokens, "//"):
+            self.tokens.pop(0)
+            return expression // self.parse_unary_expression()
+        else:
+            return expression
+
+    def parse_unary_expression(self):
+
+        if check_token(self.tokens, "-"):
+            self.tokens.pop(0)
+            return 0 - self.parse_paren_expression()
+        elif check_token(self.tokens, "+"):
+            self.tokens.pop(0)
+            return 0 + self.parse_paren_expression()
+        elif check_token(self.tokens, "~"):
+            self.tokens.pop(0)
+            return ~self.parse_paren_expression()
+        else:
+            return self.parse_paren_expression()
+
+    def parse_paren_expression(self):
+
+        if check_token(self.tokens, "("):
+            expect_token(self.tokens, "(")
+            expression = self.parse_expression()
+            expect_token(self.tokens, ")")
             return expression
         else:
-            return parse_numvar(tokens)
+            return self.parse_numvar()
 
-    def parse_numvar(tokens):
-        if tokens[0][0].isdigit():
-            return parse_number(tokens)
-        elif tokens[0][0].isalpha():
-            return parse_variable(tokens)
+    def parse_numvar(self):
 
-    def parse_number(tokens):
-        return int(tokens.pop(0))
+        if self.tokens[0][0].isdigit():
+            return self.parse_number()
+        elif self.tokens[0][0] in ("'", '"'):
+            return self.parse_string()
+        elif self.tokens[0][0].isalpha():
+            return self.parse_identifier()
 
-    def parse_variable(tokens):
-        token = tokens.pop(0)
+    def parse_number(self):
+
+        number =  self.tokens.pop(0) 
+        if "." in number:
+            return float(number)
+        else:
+            return int(number)
+
+    def parse_string(self):
+
+        return self.tokens.pop(0)[1:] #strip quote
+
+    def parse_identifier(self):
+
+        name = self.tokens.pop(0)
         try:
-            return variables[token]
+            atom = self._locals[name]
         except KeyError:
-            print "unknown variable", token
+            try:
+                atom =  self.streams[name]
+            except KeyError:
+                try:
+                    atom =  builtins[name]
+                except KeyError:
+                    print "unknown identifier", name
 
-    tokens = tokenize(string)
-    statements = []
-    while tokens:
-        print tokens
-        statement = parse_statement(tokens)
-        if statement is not None:
-            statements.append(statement)
-    return statements
-    #return chips.Process(32, *statements)
+        if check_token(self.tokens, "("):
+            return self.parse_invoke(name, atom)
+        else:
+            return atom
 
+    def parse_invoke(self, name, atom):
+        expect_token(self.tokens, "(")
+        parameters = []
+        while not check_token(self.tokens, ")"):
+            parameters.append(self.parse_expression())
+            if check_token(self.tokens, ","):
+                expect_token(self.tokens, ",")
+            else:
+                break
+        expect_token(self.tokens, ")")
+        try:
+            return atom(*parameters)
+        except TypeError:
+            print "Incorrect use of", name 
+            if name in usage:
+                print "Usage: ", usage[name]
 
-print parse(
-"""variable a : integer 8 bits
-variable b : integer 8 bits
-input a : integer 8 bits
-output b : integer 8 bits
-a = 1
-b = 1 + 1
-read a a
-write b b
-""")
-
-if __name__ == "__main__":
-    import sys
-    filename = sys.argv[1]
-    file = open(filenamei, 'r')
-    file = file.read()
-    print parse(file)
-    
