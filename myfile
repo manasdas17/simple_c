@@ -1,3 +1,12 @@
-a <= 1 + 1
-b <= port("myport", 8) + 12
-output (b + 1) << 1 : port "asdasdf"
+a <- counter(0, 10, 1)
+
+process:
+	#never ending loop				
+	loop:
+	
+		read a -> a
+		while a:
+			write b <- a
+			a = a - 1
+	
+output b -> console

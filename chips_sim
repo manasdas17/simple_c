@@ -50,6 +50,7 @@ if mode == "simulation":
     input_file = input_file.read()
     parser = compiler.Parser()
     chip = parser.parse(input_file)
+    chip.reset()
     chip.execute(1000)
 
 elif mode == "tree":
