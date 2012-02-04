@@ -2,31 +2,30 @@ import chips
 import tokenize
 
 sinks = {
-    "port" : chips.OutPort,
-    "console" : chips.Console,
-    "serial" : chips.SerialOut,
-    "assert" : chips.Asserter,
 }
 
 sink_usage = {
-    "port"    : "output <stream> : port <name>",
-    "console" : "output <stream> : console",
-    "serial"  : "output <stream> : serial [<name> [, <clock rate> [, <baud rate>]]])",
-    "assert"  : "output <stream> : assert",
+    "asserter"    : "assert(<stream>)",
+    "counter"     : "counter(start, stop, step)",
+    "in_port"     : "in_port(<name>, <bits>)",
+    "in_serial"   : "in_serial([ <name> [, <clock rate> [, <baud rate>]]])",
+    "out_console" : "out_console(<stream>)",
+    "out_port"    : "out_port(<stream>, <name>)",
+    "out_serial"  : "out_serial(<stream>[, <name> [, <clock rate> [, <baud rate>]]])",
+    "printer"     : "printer(<stream>)",
+    "sequence"    : "sequence(<item 0> [, <item 1> [, <item n>]])",
 }
 
 builtins = {
-    "serial" : chips.SerialIn,
-    "port" : chips.InPort,
-    "printer" : chips.Printer,
-    "counter" : chips.Counter,
-    "sequence" : chips.Sequence,
-}
-
-usage = {
-    "port" : "port(<name>, <bits>)",
-    "printer" : "printer(<stream>)",
-    "counter" : "counter(start, stop, step)",
+    "asserter"    : chips.Asserter,
+    "counter"     : chips.Counter,
+    "in_port"     : chips.InPort,
+    "in_serial"   : chips.SerialIn,
+    "out_console" : chips.Console,
+    "out_port"    : chips.OutPort,
+    "out_serial"  : chips.SerialOut,
+    "printer"     : chips.Printer,
+    "sequence"    : chips.Sequence,
 }
 
 class Parser:
@@ -43,40 +42,20 @@ class Parser:
         self.tokens = tokenize.Tokenize(string)
 
         while self.tokens.peek():
-            print self.tokens.peek()
             if self.tokens.check("process"):
                 self.parse_process()
-            elif self.tokens.check("output"):
-                self.parse_sink()
-            else:
+            elif self.tokens.check_next("<="):
+                print "parsing connection"
                 self.parse_connection()
+            else:
+                print "parsing expression"
+                print self.tokens.peek()
+                expression = self.parse_expression()
+                if self.is_sink(expression):
+                    self.sinks.append(expression)
+                self.tokens.expect("#end of line")
 
         return chips.Chip(*self.sinks)
-
-    def parse_sink(self):
-        self.tokens.expect("output")
-        stream = self.parse_expression()
-        self.tokens.expect(":")
-        sink = self.tokens.pop()
-        parameters = [stream]
-        while not self.tokens.check("#end of line"):
-            parameters.append(self.parse_expression())
-            if self.tokens.check(","):
-                self.tokens.expect(",")
-            else:
-                break
-        self.tokens.expect("#end of line")
-        try:
-            self.sinks.append(sinks[sink](*parameters))
-        except TypeError:
-            self.syntax_error("Incorrect use of {0}\nUsage: {1}".format(
-                sink,
-                sink_usage[sink],
-            ))
-        except KeyError:
-            self.syntax_error("Unknown sink {0}".format(
-                sink,
-            ))
 
     def parse_connection(self):
         target_name = self.tokens.pop()
@@ -98,6 +77,7 @@ class Parser:
             statements.append(self.parse_statement())
         self.tokens.expect("#dedent")
         chips.Process(32, *statements)
+        self._locals = {}
 
     def parse_statement(self):
         if self.tokens.check("if"):
@@ -149,6 +129,7 @@ class Parser:
     def parse_read(self):
         self.tokens.expect("read")
         in_ = self.tokens.pop()
+        self.tokens.expect("=>")
         var = self.tokens.pop()
         if var not in self._locals:
             self._locals[var] = chips.Variable(0)
@@ -160,6 +141,7 @@ class Parser:
     def parse_write(self):
         self.tokens.expect("write")
         out_ = self.tokens.pop()
+        self.tokens.expect("<=")
         expression = self.parse_expression()
         self.tokens.expect("#end of line")
         if out_ not in self.streams:
@@ -450,4 +432,8 @@ class Parser:
                     name,
                 ))
 
-
+    def is_sink(self, expression):
+        if hasattr(expression, "get"): return False
+        if hasattr(expression, "is_process"): return False
+        if not hasattr(expression, "set_chip"): return False
+        return True

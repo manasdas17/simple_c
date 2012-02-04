@@ -34,7 +34,7 @@ chips2vhdl <input_file>
 mode = "simulation"
 
 for arg in sys.argv[1:]:
-    if arg == "help":
+    if arg == "--help":
         show_help_message()
     elif arg == "--tree":
         mode = "tree"

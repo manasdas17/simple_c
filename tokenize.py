@@ -1,4 +1,4 @@
-operators = [",", "=", "==", "<", ">", ">=", "<=", "<<", ">>", "(", ")", "+", "-", "*", "//", "~", "&", "|", "^", ":"]
+operators = ["=>", ",", "=", "==", "<", ">", ">=", "<=", "<<", ">>", "(", ")", "+", "-", "*", "//", "~", "&", "|", "^", ":"]
 
 class Tokenize:
     def __init__(self, string):
@@ -105,6 +105,12 @@ class Tokenize:
 
     def check(self, token):
         if self.tokens and self.tokens[0][0] == token:
+            return True
+        else:
+            return False
+
+    def check_next(self, token):
+        if len(self.tokens) > 1 and self.tokens[1][0] == token:
             return True
         else:
             return False
