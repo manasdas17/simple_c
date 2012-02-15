@@ -1,10 +1,14 @@
+import os.path
+
 import chips
 import tokenize
+
+from chips.streams import _repeaterize
 
 sinks = {
 }
 
-sink_usage = {
+usage = {
     "asserter"    : "assert(<stream>)",
     "counter"     : "counter(start, stop, step)",
     "in_port"     : "in_port(<name>, <bits>)",
@@ -36,33 +40,56 @@ class Parser:
         exit(1)
 
     def parse(self, string):
-        self.streams = {}
+        self._globals = {}
         self._locals = {}
         self.sinks = []
         self.tokens = tokenize.Tokenize(string)
 
         while self.tokens.peek():
+            self.parse_module_statement()
+
+        return chips.Chip(*self.sinks)
+
+    def parse_module_statement(self):
+
+            #process
             if self.tokens.check("process"):
                 self.parse_process()
+
+            #module import
+            elif self.tokens.check("import"):
+                self.tokens.expect("import")
+                module_path = []
+                while not self.tokens.check("as"):
+                    module_path.append(self.tokens.pop())
+                    if self.tokens.check("."):
+                        self.tokens.pop()
+                    else:
+                        break
+                self.tokens.expect("as")
+                module_name = self.tokens.pop()
+                self.tokens.expect("#end of line")
+                self._globals[module_name] = os.path.join(*module_path)
+
+            #concurrent connection
             elif self.tokens.check_next("<="):
-                print "parsing connection"
                 self.parse_connection()
+
+            #concurrent expression with no target
             else:
-                print "parsing expression"
-                print self.tokens.peek()
                 expression = self.parse_expression()
                 if self.is_sink(expression):
                     self.sinks.append(expression)
                 self.tokens.expect("#end of line")
 
-        return chips.Chip(*self.sinks)
+
 
     def parse_connection(self):
         target_name = self.tokens.pop()
         self.tokens.expect("<=")
         expression = self.parse_expression()
         self.tokens.expect("#end of line")
-        self.streams[target_name] = expression
+        self._globals[target_name] = expression
 
     def parse_process(self):
         self._locals = {}
@@ -133,10 +160,10 @@ class Parser:
         var = self.tokens.pop()
         if var not in self._locals:
             self._locals[var] = chips.Variable(0)
-        if in_ not in self.streams:
+        if in_ not in self._globals:
             self.syntax_error("unknown stream: {0}".format(in_))
         self.tokens.expect("#end of line")
-        return self.streams[in_].read(self._locals[var])
+        return _repeaterize(self._globals[in_]).read(self._locals[var])
 
     def parse_write(self):
         self.tokens.expect("write")
@@ -144,16 +171,31 @@ class Parser:
         self.tokens.expect("<=")
         expression = self.parse_expression()
         self.tokens.expect("#end of line")
-        if out_ not in self.streams:
-            self.streams[out_] = chips.Output()
-        return self.streams[out_].write(expression)
+        if out_ not in self._globals:
+            self._globals[out_] = chips.Output()
+        return self._globals[out_].write(expression)
 
     def parse_print(self):
         self.tokens.expect("print")
         out_ = self.tokens.pop()
-        expression = self.parse_expression()
+        self.tokens.expect("<=")
+        parameter = self.parse_expression()
         self.tokens.expect("#end of line")
-        return chips.Print(outputs[out_], expression)
+        if out_ not in self._globals:
+            self._globals[out_] = chips.Output()
+        return chips.Print(self._globals[out_], parameter)
+
+    def parse_scan(self):
+        self.tokens.expect("scan")
+        in_ = self.tokens.pop()
+        self.tokens.expect("=>")
+        var = self.tokens.pop()
+        if var not in self._locals:
+            self._locals[var] = chips.Variable(0)
+        if in_ not in self._globals:
+            self.syntax_error("unknown stream: {0}".format(in_))
+        self.tokens.expect("#end of line")
+        return scan(self._globals[in_], self._locals[var])
 
     def parse_if(self):
 
@@ -397,7 +439,7 @@ class Parser:
             atom = self._locals[name]
         except KeyError:
             try:
-                atom =  self.streams[name]
+                atom =  self._globals[name]
             except KeyError:
                 try:
                     atom =  builtins[name]
@@ -422,15 +464,51 @@ class Parser:
         try:
             return atom(*parameters)
         except TypeError:
-            if name in usage:
-                self.syntax_error("incorrect invokation of: {0}\nUsage: {1}".format(
-                    name,
-                    usage[name]
-                ))
+            return self.parse_module(name, atom, parameters)
+
+    def parse_module(self, name, path, parameters):
+
+        #store current parser state
+        stored__globals = self._globals
+        stored_locals = self._locals
+        stored_tokens = self.tokens
+
+        string = open(path, 'r').read()
+        self.tokens = tokenize.Tokenize(string)
+        self.tokens.expect("input")
+        parameter_names = []
+        self.tokens.expect("(")
+        while not self.tokens.check(")"):
+            parameter_names.append(self.tokens.pop())
+            if self.tokens.check(","):
+                self.tokens.pop()
             else:
-                self.syntax_error("incorrect invokation of: {0}".format(
-                    name,
-                ))
+                break
+        self.tokens.expect(")")
+        self.tokens.expect("#end of line")
+
+        if len(parameter_names) != len(parameters):
+            self.syntax_error("{0} expects {1} parameters, {2} given".format(
+                name,
+                len(parameter_names),
+                len(parameters)
+            ))
+
+        self._globals = dict(zip(parameter_names, parameters))
+        self._locals = {}
+
+        while not self.tokens.check("output"):
+            self.parse_module_statement()
+        self.tokens.expect("output")
+        expression = self.parse_expression()
+        self.tokens.expect("#end of line")
+
+        #restore current parser state
+        self._globals = stored__globals
+        self._locals = stored_locals
+        self.tokens = stored_tokens
+
+        return expression
 
     def is_sink(self, expression):
         if hasattr(expression, "get"): return False

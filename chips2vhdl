@@ -38,10 +38,13 @@ options:
     exit(0)
 
 mode = "help"
+run = False
 
 for arg in sys.argv[1:]:
     if arg == "--sim":
         mode = "simulation"
+    elif arg == "--run":
+        run = True
     elif arg == "--synth":
         mode = "synthesis"
     elif arg == "help":
@@ -63,6 +66,8 @@ if mode == "simulation":
     parser = compiler.Parser()
     chip = parser.parse(input_file)
     chip.write_code(plugin)
+    if run:
+        plugin.ghdl_test("test", stop_cycles = 1000)
 
 elif mode == "synthesis":
 

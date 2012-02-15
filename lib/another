@@ -1,0 +1,6 @@
+input(a, b)
+
+process:
+    print z "hello world"
+
+output z
