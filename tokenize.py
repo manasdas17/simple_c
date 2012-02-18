@@ -1,104 +1,71 @@
-operators = ["=>", ",", ".","=", "==", "<", ">", ">=", "<=", "(", ")", "+", "-", "*", "/", "//", "~", "&", "|", "^", ":"]
+operators = [",", ".","=", "<<", ">>", "==", "<", ">", ">=", "<=", "(", ")", "{", "}", "+", "-", "*", "/", "//", "~", "&", "|", "^", ";", "&&", "||"]
 
 class Tokenize:
     def __init__(self, string):
         token = ""
         tokens = []
-        indentation_level_stack = [1]
         lineno = 1
         charno = 1
 
-        for char in string:
-            if not token:
-                token = char
-
-            elif token.startswith("\n"):
-                if char == "\n":
-                    token = char
-                    lineno += 1
-                    charno = 1
-                elif char.isspace() and char != "\n":
-                    token += char
-                else:
-                    #count indentation
-                    if token.startswith("\n") or token.startswith("\r"):
-                        tokens.append(("#end of line", lineno, charno))
-                        indentation_level = len(token.expandtabs())
-                        lineno += 1
-                        charno = 1
-                        if indentation_level > indentation_level_stack[-1]:
-                            tokens.append(("#indent", lineno, charno))
-                            indentation_level_stack.append(indentation_level)
-                        elif indentation_level < indentation_level_stack[-1]:
-                            while indentation_level < indentation_level_stack[-1]:
-                                indentation_level_stack.pop()
-                                tokens.append(("#dedent", lineno, charno))
-                    token = char
-                
-
-            #white space
-            elif token.isspace():
-                if char.isspace() and char != "\n":
-                    token += char
-                else:
+        for line in string.splitlines():
+            for char in line + " ":
+                if not token:
                     token = char
 
-            #identifier
-            elif token[0].isalpha():
-                if char.isalnum() or char == "_":
-                    token += char
-                else:
-                    tokens.append((token, lineno, charno))
-                    token = char
+                #comment
+                elif (token + char).startswith("/*"):
+                    if (token + char).endswith("*/"):
+                        token = ""
+                    else:
+                        token += char
 
-            #number
-            elif token[0].isdigit():
-                if char.isdigit() or char in [".", "x", "X"]:
-                    token += char
-                else:
-                    tokens.append((token, lineno, charno))
-                    token = char
+                #white space
+                elif token.isspace():
+                    if char.isspace():
+                        token += char
+                    else:
+                        token = char
 
-            #string
-            elif token.startswith("'"):
-                if char != "'":
-                    token += char
-                else:
-                    tokens.append((token, lineno, charno))
-                    token = ""
+                #identifier
+                elif token[0].isalpha():
+                    if char.isalnum() or char == "_":
+                        token += char
+                    else:
+                        tokens.append((token, lineno, charno))
+                        token = char
 
-            #string
-            elif token.startswith('"'):
-                if char != '"':
-                    token += char
-                else:
-                    tokens.append((token, lineno, charno))
-                    token = ""
+                #number
+                elif token[0].isdigit():
+                    if char.isdigit() or char in [".", "x", "X"]:
+                        token += char
+                    else:
+                        tokens.append((token, lineno, charno))
+                        token = char
 
-            #operator
-            elif token in operators:
-                if token + char in operators:
-                    token += char
-                else:
-                    tokens.append((token, lineno, charno))
-                    token = char
+                #string
+                elif token.startswith('"'):
+                    if char != '"' or (token.endswith("\\") and not token.endswith("\\\\")):
+                        token += char
+                    else:
+                        tokens.append((token, lineno, charno))
+                        token = ""
 
-            #comment
-            elif token[0] == "#":
-                if char not in ["\n", "\r\n" "\r"]:
-                    token += char
-                else:
-                    #tokens.append(token)
-                    token = ""
+                #operator
+                elif token in operators:
+                    if token + char in operators:
+                        token += char
+                    else:
+                        tokens.append((token, lineno, charno))
+                        token = char
 
-            charno += 1
 
-        tokens.append(("#end of line", lineno, charno))
-        for i in indentation_level_stack:
-            if i > 1:
-                tokens.append(("#dedent", lineno, charno))
+                charno += 1
+            lineno += 1
+            charno = 1
 
-        print tokens
+        for token, line, char in tokens:
+            print token, "line", line, ",", char
+
         self.tokens = tokens
         self.lineno = 1
         self.charno = 1
@@ -142,4 +109,3 @@ class Tokenize:
 
     def char(self):
         return self.charno
-

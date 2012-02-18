@@ -1,7 +1,0 @@
-process:
-    a = 10
-    while a:
-	write a <= a
-        a = a - 1
-
-out_console(printer(a))
