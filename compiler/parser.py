@@ -26,17 +26,15 @@ class Parser:
 
     def parse_global_declaration(self):
         self.tokens.expect("int")
-        name = self.tokens.pop()
-        if self.tokens.check("("):
-            return self.parse_declare_function(name)
+        if self.tokens.check_next("("):
+            #function
+            return self.parse_declare_function()
         else:
             #variable
-            self.tokens.expect(";")
-            self.scope[name] = self.offset
-            self.offset += 1
-            return DeclareVariable()
+            return self.parse_declare()
 
-    def parse_declare_function(self, name):
+    def parse_declare_function(self):
+        name = self.tokens.pop()
         self.tokens.expect("(")
         args = []
         stored_offset = self.offset
@@ -72,15 +70,16 @@ class Parser:
         elif self.tokens.check("return"):
             return self.parse_return()
         else:
-            assignment = self.parse_assignment()
+            expression = self.parse_expression()
             self.tokens.expect(";")
-            return assignment
+            return Discard(expression)
 
     def parse_block(self):
         stored_scope = copy.copy(self.scope)
         self.tokens.expect("{")
         declarations = []
         while self.tokens.check("int"):
+            self.tokens.expect("int")
             declarations.append(self.parse_declare())
         statements = []
         while not self.tokens.check("}"):
@@ -99,7 +98,6 @@ class Parser:
         if self.tokens.check("else"):
             self.tokens.expect("else")
             false_statement = self.parse_statement()
-        
         return If(expression, true_statement, false_statement)
 
     def parse_while(self):
@@ -142,24 +140,54 @@ class Parser:
         return Return(expression)
 
     def parse_declare(self):
-        self.tokens.expect("int")
-        name = self.tokens.pop()
+        declarators = [self.parse_declarator()]
+        while self.tokens.check(","):
+            self.tokens.expect(",")
+            declarators.append(self.parse_declarator())
         self.tokens.expect(";")
-        self.scope[name] = self.offset
-        self.offset += 1
-        return DeclareVariable()
+        return Declare(declarators)
 
-    def parse_assignment(self):
-        variable = self.tokens.pop()
-        self.tokens.expect("=")
-        expression = self.parse_expression()
-        try:
-            offset = self.scope[variable]
-        except KeyError:
-            self.syntax_error("unknown identifier: " + variable)
-        return Assignment(offset, expression)
+    def parse_declarator(self):
+        name = self.tokens.pop()
+        self.scope[name] = self.offset
+        size = 1
+        if self.tokens.check("["):
+            print name
+            self.tokens.expect("[")
+            size = self.parse_constant_expression().value()
+            self.tokens.expect("]")
+        if self.tokens.check("="):
+            self.tokens.expect("=")
+            initialise = self.parse_expression()
+        else:
+            initialise = None
+        declarator = Declarator(size, initialise, name, self.offset)
+        self.offset += size
+        return declarator
+
+    def parse_constant_expression(self):
+        return self.parse_or_expression()
+
 
     def parse_expression(self):
+        for token in ["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "&=", 
+            "|=", "^="]:
+            if self.tokens.check_next(token):
+                variable = self.tokens.pop()
+                self.tokens.expect(token)
+                expression = self.parse_expression()
+                try:
+                    offset = self.scope[variable]
+                except KeyError:
+                    self.syntax_error("unknown identifier: " + variable)
+                if token == "=":
+                    return Assignment(offset, expression)
+                else:
+                    return Assignment(offset, Binary(Variable(offset, variable), 
+                    expression, token[:-1]))
+        return self.parse_or_expression()
+
+    def parse_or_expression(self):
         expression = self.parse_and_expression()
         while self.tokens.peek() in ["||"]:
             function = self.tokens.pop()
@@ -240,7 +268,7 @@ class Parser:
         return expression
 
     def parse_unary_expression(self):
-        while self.tokens.peek() in ["-", "+", "!", "~"]:
+        while self.tokens.peek() in ["&", "*", "-", "+", "!", "~"]:
             function = self.tokens.pop()
             return Unary(self.parse_paren_expression(), function)
         else:
@@ -251,9 +279,9 @@ class Parser:
             self.tokens.expect("(")
             expression = self.parse_expression()
             self.tokens.expect(")")
-            return expression
         else:
-            return self.parse_numvar()
+            expression = self.parse_numvar()
+        return expression
 
     def parse_numvar(self):
         if self.tokens.peek()[0].isdigit():
@@ -266,15 +294,35 @@ class Parser:
         return Constant(int(number))
 
     def parse_identifier(self):
-        name = self.tokens.pop()
-        if self.tokens.check("("):
-            return self.parse_function_call(name)
-        else:
+        token = self.tokens.peek()
+        if token in ["++", "--"]:
+            self.tokens.expect(token)
+            name = self.tokens.pop()
             try:
                 offset = self.scope[name]
             except KeyError:
                 self.syntax_error("unknown identifier: " + name)
-            return Variable(offset)
+            if token == "++":
+                return PreIncrement(offset)
+            else:
+                return PreDecrement(offset)
+        else:
+            name = self.tokens.pop()
+            if self.tokens.check("("):
+                return self.parse_function_call(name)
+            else:
+                try:
+                    offset = self.scope[name]
+                except KeyError:
+                    self.syntax_error("unknown identifier: " + name)
+                if self.tokens.check("++"):
+                    self.tokens.expect("++")
+                    return PostIncrement(offset)
+                elif self.tokens.check("--"):
+                    self.tokens.expect("--")
+                    return PostDecrement(offset)
+                else:
+                    return Variable(offset, name)
 
     def parse_function_call(self, name):
         self.tokens.expect("(")
@@ -286,10 +334,12 @@ class Parser:
             else:
                 break
         self.tokens.expect(")")
+
         try:
             function_declaration = self.scope[name]
         except KeyError:
             self.syntax_error("unknown identifier: " + name)
+
         if len(args) != len(function_declaration.args):
             self.syntax_error("wrong number of arguments")
         return FunctionCall(args, function_declaration)

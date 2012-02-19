@@ -1,0 +1,2 @@
+class ConstantError(Exception):
+    pass
