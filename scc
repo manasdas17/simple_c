@@ -9,11 +9,11 @@ __email__ = "chips@jondawson.org.uk"
 __status__ = "Prototype"
 
 import sys
-import compiler
+import compiler.parser as parser
 
 input_file = sys.argv[1]
 input_file = open(input_file, 'r')
 input_file = input_file.read()
-parser = compiler.Parser()
-parser.parse(input_file)
+theparser = parser.Parser()
+theparser.parse(input_file)
 

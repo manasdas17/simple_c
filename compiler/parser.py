@@ -1,6 +1,6 @@
 import os.path
 
-import tokenize
+import scanner
 from tree import *
 import copy
 
@@ -15,7 +15,7 @@ class Parser:
     def parse(self, string):
         self.scope = {}
         self.offset = 0
-        self.tokens = tokenize.Tokenize(string)
+        self.tokens = scanner.Tokenize(string)
 
         global_declarations = []
         while self.tokens.peek():
