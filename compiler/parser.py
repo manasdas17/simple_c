@@ -17,12 +17,17 @@ class Parser:
         self.offset = 0
         self.tokens = scanner.Tokenize(string)
 
-        global_declarations = []
-        while self.tokens.peek():
-            global_declarations.append(self.parse_global_declaration())
+        try:
+            global_declarations = []
+            while self.tokens.peek():
+                global_declarations.append(self.parse_global_declaration())
 
-        for global_declaration in global_declarations:
-            global_declaration.generate_code()
+            for global_declaration in global_declarations:
+                global_declaration.generate_code()
+        except ConstantError:
+            self.syntax_error("Expression must be a constant")
+        except TypeError:
+            self.syntax_error("Type error in expression")
 
     def parse_global_declaration(self):
         self.tokens.expect("int")
@@ -42,7 +47,8 @@ class Parser:
         while not self.tokens.check(")"):
             self.tokens.expect("int")
             argname = self.tokens.pop()
-            self.scope[argname] = self.offset
+            declarator = Declarator(1, None, argname, self.offset, "int")
+            self.scope[argname] = declarator
             self.offset += 1
             args.append(name)
             if self.tokens.check(","):
@@ -149,10 +155,10 @@ class Parser:
 
     def parse_declarator(self):
         name = self.tokens.pop()
-        self.scope[name] = self.offset
         size = 1
+        _type = "int"
         if self.tokens.check("["):
-            print name
+            _type = "array of int"
             self.tokens.expect("[")
             size = self.parse_constant_expression().value()
             self.tokens.expect("]")
@@ -161,7 +167,8 @@ class Parser:
             initialise = self.parse_expression()
         else:
             initialise = None
-        declarator = Declarator(size, initialise, name, self.offset)
+        declarator = Declarator(size, initialise, name, self.offset, _type)
+        self.scope[name] = declarator
         self.offset += size
         return declarator
 
@@ -177,13 +184,14 @@ class Parser:
                 self.tokens.expect(token)
                 expression = self.parse_expression()
                 try:
-                    offset = self.scope[variable]
+                    declarator = self.scope[variable]
+                    print declarator
                 except KeyError:
                     self.syntax_error("unknown identifier: " + variable)
                 if token == "=":
-                    return Assignment(offset, expression)
+                    return Assignment(declarator, expression)
                 else:
-                    return Assignment(offset, Binary(Variable(offset, variable), 
+                    return Assignmen(declarator, Binary(Variable(declarator, variable), 
                     expression, token[:-1]))
         return self.parse_or_expression()
 
@@ -299,30 +307,30 @@ class Parser:
             self.tokens.expect(token)
             name = self.tokens.pop()
             try:
-                offset = self.scope[name]
+                declarator = self.scope[name]
             except KeyError:
                 self.syntax_error("unknown identifier: " + name)
             if token == "++":
-                return PreIncrement(offset)
+                return PreIncrement(declarator)
             else:
-                return PreDecrement(offset)
+                return PreDecrement(declarator)
         else:
             name = self.tokens.pop()
             if self.tokens.check("("):
                 return self.parse_function_call(name)
             else:
                 try:
-                    offset = self.scope[name]
+                    declarator = self.scope[name]
                 except KeyError:
                     self.syntax_error("unknown identifier: " + name)
                 if self.tokens.check("++"):
                     self.tokens.expect("++")
-                    return PostIncrement(offset)
+                    return PostIncrement(declarator)
                 elif self.tokens.check("--"):
                     self.tokens.expect("--")
-                    return PostDecrement(offset)
+                    return PostDecrement(declarator)
                 else:
-                    return Variable(offset, name)
+                    return Variable(declarator, name)
 
     def parse_function_call(self, name):
         self.tokens.expect("(")

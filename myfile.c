@@ -4,7 +4,6 @@ int myfunction(int a){
 
 int main()
 {
-    int m;
+    int m[20];
     m = 1 + 2 + 3 / 4;
-
 }

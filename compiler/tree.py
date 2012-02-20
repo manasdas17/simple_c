@@ -20,18 +20,26 @@ class Constant:
     def value(self):
         return self.constant
 
-class Variable:
+    def _type(self):
+        if type(self.constant) is int:
+            return "int"
+        elif type(self.constant) is float:
+            return "float"
 
-    def __init__(self, offset, name):
-        self.offset = offset
+class Variable:
+    def __init__(self, declarator, name):
+        self.declarator = declarator
         self.name = name
 
     def generate_code(self):
-        print "#variable", self.name, "at offset", self.offset
-        print "memory[end++] = memory[start+", self.offset, "]"
+        print "#variable", self.name, "at offset", self.declarator.offset
+        print "memory[end++] = memory[start +", self.declarator.offset, "]"
 
     def value(self):
-        raise ConstantError
+        raise ConstantError("Variable is not a constant")
+
+    def _type(self):
+        return self.declarator._type
 
 class Declare:
     def __init__(self, declarators):
@@ -42,14 +50,15 @@ class Declare:
             declarator.generate_code()
 
 class Declarator:
-    def __init__(self, size, expression, name, offset):
+    def __init__(self, size, expression, name, offset, _type):
         self.size = size
         self.expression = constant_fold(expression)
         self.name = name
         self.offset = offset
+        self._type = _type
 
     def generate_code(self):
-        print "# declare variable", self.name, "at offset", self.offset
+        print "# declare variable", self.name, 'of type "', self._type, '" at offset', self.offset
         print "end +=", self.size
         if self.expression:
             self.expression.generate_code()
@@ -160,7 +169,7 @@ class FunctionCall:
         print "start = memory[--end]"
 
     def value():
-        raise Exception("expression is not a constant")
+        raise Exception("Expression is not a constant")
 
 def sign(x):
     return -1 if x < 0 else 1
@@ -177,6 +186,12 @@ class Binary:
         self.left = constant_fold(left)
         self.right = constant_fold(right)
         self.function = function
+
+        if self.left._type() != "int":
+            raise TypeError("only integer operands are supported")
+        if self.right._type() != "int":
+            raise TypeError("only integer operands are supported")
+
 
     def generate_code(self):
         self.left.generate_code()
@@ -206,11 +221,16 @@ class Binary:
         }
         return functions[self.function](self.left.value(), self.right.value())
 
+    def _type():
+        return "int"
+
 class Unary:
 
     def __init__(self, expression, function):
         self.expression = constant_fold(expression)
         self.function = function
+        if self.expression._type() != "int":
+            raise TypeError("only integer operands are supported")
 
     def generate_code(self):
         self.expression.generate_code()
@@ -225,57 +245,72 @@ class Unary:
         }
         return functions[self.function](self.left.value(), self.right.value())
 
+    def _type():
+        return "int"
+
 class PostIncrement:
-    def __init__(self, offset):
-        self.offset = offset
+    def __init__(self, declarator):
+        self.declarator = declarator
 
     def generate_code(self):
-        print "#post increment offset", self.offset
-        print "memory[end++] = memory[start+", self.offset, "]"
-        print "memory[start+", self.offset, "] + memory[--end] + 1"
+        print "#post increment offset", self.declarator.offset
+        print "memory[end++] = memory[start+", self.declarator.offset, "]"
+        print "memory[start+", self.declarator.offset, "] + memory[--end] + 1"
         print "end++"
 
     def value(self):
-        raise ConstantError
+        raise ConstantError("Expression is not a constant")
+
+    def _type(self):
+        return self.declarator._type
 
 class PostDecrement:
-    def __init__(self, offset):
-        self.offset = offset
+    def __init__(self, declarator):
+        self.declarator = declarator
 
     def generate_code(self):
-        print "#post decrement offset", self.offset
-        print "memory[end++] = memory[start+", self.offset, "]"
-        print "memory[start+", self.offset, "] + memory[--end] - 1"
+        print "#post decrement declarator", self.declarator.offset
+        print "memory[end++] = memory[start+", self.declarator.offset, "]"
+        print "memory[start+", self.declarator.offset, "] + memory[--end] - 1"
         print "end++"
 
     def value(self):
-        raise ConstantError
+        raise ConstantError("Expression is not a constant")
+
+    def _type(self):
+        return self.declarator._type
 
 class PreIncrement:
-    def __init__(self, offset):
-        self.offset = offset
+    def __init__(self, declarator):
+        self.declarator = declarator
 
     def generate_code(self):
-        print "#pre increment offset", self.offset
-        print "memory[end++] = memory[start+", self.offset, "]"
-        print "memory[start+", self.offset, "] + memory[--end] + 1"
-        print "memory[end++] = memory[start+", self.offset, "]"
+        print "#pre increment declarator", self.declarator.offset
+        print "memory[end++] = memory[start+", self.declarator.offset, "]"
+        print "memory[start+", self.declarator, "] + memory[--end] + 1"
+        print "memory[end++] = memory[start+", self.declarator.offset, "]"
 
     def value(self):
-        raise ConstantError
+        raise ConstantError("Expression is not a constant")
+
+    def _type(self):
+        return self.declarator._type
 
 class PreDecrement:
-    def __init__(self, offset):
-        self.offset = offset
+    def __init__(self, declarator):
+        self.declarator = declarator
 
     def generate_code(self):
-        print "#pre deccrement offset", self.offset
-        print "memory[end++] = memory[start+", self.offset, "]"
-        print "memory[start+", self.offset, "] + memory[--end] - 1"
-        print "memory[end++] = memory[start+", self.offset, "]"
+        print "#pre deccrement declarator", self.declarator.offset
+        print "memory[end++] = memory[start+", self.declarator.offset, "]"
+        print "memory[start+", self.declarator.offset, "] + memory[--end] - 1"
+        print "memory[end++] = memory[start+", self.declarator.offset, "]"
 
     def value(self):
-        raise ConstantError
+        raise ConstantError("Expression is not a constant")
+
+    def _type(self):
+        return self.declarator._type
 
 class Block:
 
@@ -300,14 +335,20 @@ class Discard:
 
 class Assignment:
 
-    def __init__(self, offset, expression):
-        self.offset = offset
+    def __init__(self, declarator, expression):
+        self.declarator = declarator
         self.expression = constant_fold(expression)
+        if self.declarator._type != self.expression._type():
+            raise TypeError("Cannot assign " + self.expression._type() + 
+            " to " + self.declarator._type)
 
     def generate_code(self):
         self.expression.generate_code()
-        print "memory[start+", self.offset, "] = memory[--end]"
-        print "end++" #place variable back on stack
+        print "memory[start+", self.declarator.offset, "] = memory[--end]"
+        print "end++" #leave variable on top of stack
 
     def value(self):
-        raise ConstantError
+        raise ConstantError("Expression is not a constant")
+
+    def _type(self):
+        return self.declarator._type
