@@ -4,6 +4,24 @@ operators = [",", ".", "=", "<<", ">>", "==","!=", "<", ">", ">=", "<=", "(",
 "[", "]"]
 
 class Tokenize:
+    """
+    Lexical Scanner
+
+    Breaks source file into tokens a stream of tokens. Tokens can be:
+
+    * number - characters 0-9, x, X or .
+    * identifier - characters a-z, 0-9, or _
+    * Keywords - characters a-z
+    * Operators - +, -, *, /, %, ....
+    * Strings - any character enclosed in quotes, \ escapes \\\\ is literal \\
+    * Comments - /* followed by any sequence of characters followed by */
+    * Blank Space - Any blank space or line end
+
+    The lexical scanner provides functions to consume, and expect tokens in 
+    the token stream. The scanner also keeps track of line numbers and 
+    characters for use in Error messages. 
+    """
+
     def __init__(self, string):
         token = ""
         tokens = []
@@ -74,18 +92,28 @@ class Tokenize:
         self.charno = 1
 
     def check(self, token):
+
+        """Check whether *token* is the next token in the stream"""
+
         if self.tokens and self.tokens[0][0] == token:
             return True
         else:
             return False
 
     def check_next(self, token):
+
+        """Check whether *token* is the next but one token in the stream"""
+
         if len(self.tokens) > 1 and self.tokens[1][0] == token:
             return True
         else:
             return False
 
     def expect(self, token):
+
+        """Consumes the next oken in the stream, an Error is generated if the
+        next token in the stream does not match *token*."""
+
         if self.tokens:
             if self.tokens[0][0] == token:
                 value, self.lineno, self.charno = self.tokens.pop(0)
@@ -99,16 +127,29 @@ class Tokenize:
             exit(0)
 
     def pop(self):
+
+        """Consumes the next token in the stream. The consumed token is 
+        returned."""
+
         if self.tokens:
             value, self.lineno, self.charno = self.tokens.pop(0)
             return value
 
     def peek(self):
+
+        """Returns the next token in the stream without consuming it."""
+
         if self.tokens:
             return self.tokens[0][0]
 
     def line(self):
+
+        """Return the line number of the next token in the stream."""
+
         return self.lineno
 
     def char(self):
+
+        """Return the column of the next token in the stream."""
+
         return self.charno

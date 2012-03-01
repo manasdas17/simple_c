@@ -3,16 +3,62 @@ import os.path
 import scanner
 from tree import *
 import copy
+from exceptions import CTypeError, CConstantError
 
 
 class Parser:
 
+    """
+    Parser
+
+    The parser consumes tokens from the lexical scanner, and uses them to 
+    form a parse tree. The leaves of the parse tree are defines in tree.py
+
+    The parse function accepts an input string, and returns the parse tree.
+
+    Example::
+
+        input string:
+
+        int main(){
+          int a = 1;
+          return a + 2;
+        }
+
+        The lexical scanner converts to:
+
+        ["int", "main", "(", ")", "{", "}", "int", "a", "=", "a", "+", "1"]
+
+        The Parser converts this to:
+
+                              FunctionDefinition
+                                      |
+                                      v
+                                    Block
+                                    /   \
+                                   v     v
+                       [Declaration(a)] Return
+                                           \
+                                            v
+                                         Binary(+)
+                                          /     \
+                                         v       v
+                                   Variable(a) Constant(1)
+
+    """
+
     def syntax_error(self, string):
+
+        """Generate an Error message and exit"""
+
         print string
         print "at line", self.tokens.line(), ",", self.tokens.char()
         exit(1)
 
     def parse(self, string):
+
+        """Parse the input file. Return the parse tree."""
+
         self.scope = {}
         self.offset = 0
         self.tokens = scanner.Tokenize(string)
@@ -21,15 +67,20 @@ class Parser:
             global_declarations = []
             while self.tokens.peek():
                 global_declarations.append(self.parse_global_declaration())
+            main = str(id(self.scope["main"]))
+            return CompilationUnit(global_declarations, main)
 
-            for global_declaration in global_declarations:
-                global_declaration.generate_code()
-        except ConstantError:
+        except CConstantError:
             self.syntax_error("Expression must be a constant")
-        except TypeError:
+        except CTypeError:
             self.syntax_error("Type error in expression")
 
+        return instructions
+
     def parse_global_declaration(self):
+
+        """Parse global function or variable declaration."""
+
         self.tokens.expect("int")
         if self.tokens.check_next("("):
             #function
@@ -39,6 +90,9 @@ class Parser:
             return self.parse_declare()
 
     def parse_declare_function(self):
+
+        """Parse global function declaration."""
+
         name = self.tokens.pop()
         self.tokens.expect("(")
         args = []
@@ -58,11 +112,14 @@ class Parser:
         self.offset = stored_offset
         self.tokens.expect(")")
         statement = self.parse_statement()
-        node = DeclareFunction(args, statement)
+        node = DeclareFunction(args, statement, "int")
         self.scope[name] = node
         return node
 
     def parse_statement(self):
+
+        """Parse a statement."""
+
         if self.tokens.check("{"):
             return self.parse_block()
         elif self.tokens.check("if"):
@@ -81,6 +138,18 @@ class Parser:
             return Discard(expression)
 
     def parse_block(self):
+
+        """Parse a block statement."""
+
+        #A block causes a new lexical scope to be created. Names declared 
+        #within the local scope are added to, or override names defined in 
+        #the surrounding scope. Outside the block, the surrounding scope is 
+        #restored.
+
+        #To implement this, a copy of the scope is made. Within the block, 
+        #the scope may be modified. When the block has been parsed, the stored
+        #scope is restored.
+
         stored_scope = copy.copy(self.scope)
         self.tokens.expect("{")
         declarations = []
@@ -95,6 +164,9 @@ class Parser:
         return Block(declarations, statements)
 
     def parse_if(self):
+
+        """Parse an if statement."""
+
         self.tokens.expect("if")
         self.tokens.expect("(")
         expression = self.parse_expression()
@@ -107,6 +179,9 @@ class Parser:
         return If(expression, true_statement, false_statement)
 
     def parse_while(self):
+
+        """Parse a while statement."""
+
         self.tokens.expect("while")
         self.tokens.expect("(")
         expression = self.parse_expression()
@@ -115,6 +190,9 @@ class Parser:
         return While(expression, statement)
 
     def parse_do_while(self):
+
+        """Parse a do-while statement."""
+
         self.tokens.expect("do")
         statement = self.parse_statement()
         self.tokens.expect("while")
@@ -125,27 +203,36 @@ class Parser:
         return DoWhile(expression, statement)
 
     def parse_for(self):
+
+        """Parse a for statement."""
+
         self.tokens.expect("for")
         self.tokens.expect("(")
         if not self.tokens.check(";"):
-            initialise = self.parse_assignment()
+            initialise = self.parse_expression()
         self.tokens.expect(";")
         if not self.tokens.check(";"):
             expression = self.parse_expression()
         self.tokens.expect(";")
         if not self.tokens.check(")"):
-            iterate = self.parse_assignment()
+            iterate = self.parse_expression()
         self.tokens.expect(")")
         statement = self.parse_statement()
         return For(initialise, expression, iterate, statement)
 
     def parse_return(self):
+
+        """Parse a return statement."""
+
         self.tokens.expect("return")
         expression = self.parse_expression()
         self.tokens.expect(";")
         return Return(expression)
 
     def parse_declare(self):
+
+        """Parse a local variable declaration."""
+
         declarators = [self.parse_declarator()]
         while self.tokens.check(","):
             self.tokens.expect(",")
@@ -154,6 +241,9 @@ class Parser:
         return Declare(declarators)
 
     def parse_declarator(self):
+
+        """Parse each variable within a compound variable declaration."""
+
         name = self.tokens.pop()
         size = 1
         _type = "int"
@@ -173,10 +263,16 @@ class Parser:
         return declarator
 
     def parse_constant_expression(self):
+
+        """Parse a constant expression used in variable initialisation."""
+
         return self.parse_or_expression()
 
 
     def parse_expression(self):
+
+        """Parse an assignment expression."""
+
         for token in ["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "&=", 
             "|=", "^="]:
             if self.tokens.check_next(token):
@@ -196,6 +292,9 @@ class Parser:
         return self.parse_or_expression()
 
     def parse_or_expression(self):
+
+        """Parse a logical or expression."""
+
         expression = self.parse_and_expression()
         while self.tokens.peek() in ["||"]:
             function = self.tokens.pop()
@@ -204,6 +303,9 @@ class Parser:
         return expression
 
     def parse_and_expression(self):
+
+        """Parse a logical and expression."""
+
         expression = self.parse_bitwise_xor_expression()
         while self.tokens.peek() in ["&&"]:
             function = self.tokens.pop()
@@ -212,6 +314,9 @@ class Parser:
         return expression
 
     def parse_bitwise_xor_expression(self):
+
+        """Parse a bitwise xor expression."""
+
         expression = self.parse_bitwise_or_expression()
         while self.tokens.peek() in ["^"]:
             function = self.tokens.pop()
@@ -220,6 +325,9 @@ class Parser:
         return expression
 
     def parse_bitwise_or_expression(self):
+
+        """Parse a bitwise or expression."""
+
         expression = self.parse_bitwise_and_expression()
         while self.tokens.peek() in ["|"]:
             function = self.tokens.pop()
@@ -228,6 +336,9 @@ class Parser:
         return expression
 
     def parse_bitwise_and_expression(self):
+
+        """Parse a bitwise and expression."""
+
         expression = self.parse_comparison_expression()
         while self.tokens.peek() in ["&"]:
             function = self.tokens.pop()
@@ -236,6 +347,9 @@ class Parser:
         return expression
 
     def parse_comparison_expression(self):
+
+        """Parse a comparison expression."""
+
         expression = self.parse_equality_expression()
         while self.tokens.peek() in ["<", "<=", ">", ">="]:
             function = self.tokens.pop()
@@ -244,6 +358,9 @@ class Parser:
         return expression
 
     def parse_equality_expression(self):
+
+        """Parse an equality (or inequality) expression."""
+
         expression = self.parse_shift_expression()
         while self.tokens.peek() in ["==", "!="]:
             function = self.tokens.pop()
@@ -252,6 +369,9 @@ class Parser:
         return expression
 
     def parse_shift_expression(self):
+
+        """Parse a left or right shift expression."""
+
         expression = self.parse_arithmetic_expression()
         while self.tokens.peek() in ["<<", ">>"]:
             function = self.tokens.pop()
@@ -260,6 +380,9 @@ class Parser:
         return expression
 
     def parse_arithmetic_expression(self):
+
+        """Parse an arithmetic expression."""
+
         expression = self.parse_mult_expression()
         while self.tokens.peek() in ["+", "-"]:
             function = self.tokens.pop()
@@ -268,6 +391,9 @@ class Parser:
         return expression
 
     def parse_mult_expression(self):
+
+        """Parse a multiply, divide or modulo expression."""
+
         expression = self.parse_unary_expression()
         while self.tokens.peek() in ["*", "/", "%"]:
             function = self.tokens.pop()
@@ -276,6 +402,9 @@ class Parser:
         return expression
 
     def parse_unary_expression(self):
+
+        """Parse a unary expression."""
+
         while self.tokens.peek() in ["&", "*", "-", "+", "!", "~"]:
             function = self.tokens.pop()
             return Unary(self.parse_paren_expression(), function)
@@ -283,6 +412,9 @@ class Parser:
             return self.parse_paren_expression()
 
     def parse_paren_expression(self):
+
+        """Parse a parenthesised expression."""
+
         if self.tokens.check("("):
             self.tokens.expect("(")
             expression = self.parse_expression()
@@ -292,16 +424,25 @@ class Parser:
         return expression
 
     def parse_numvar(self):
+
+        """Parse a number, or identifier."""
+
         if self.tokens.peek()[0].isdigit():
             return self.parse_number()
         elif self.tokens.peek()[0].isalpha():
             return self.parse_identifier()
 
     def parse_number(self):
+
+        """Parse a number."""
+
         number =  self.tokens.pop() 
         return Constant(int(number))
 
     def parse_identifier(self):
+
+        """Parse a variable or function call."""
+
         token = self.tokens.peek()
         if token in ["++", "--"]:
             self.tokens.expect(token)
@@ -333,6 +474,9 @@ class Parser:
                     return Variable(declarator, name)
 
     def parse_function_call(self, name):
+
+        """Parse a function call."""
+
         self.tokens.expect("(")
         args = []
         while not self.tokens.check(")"):

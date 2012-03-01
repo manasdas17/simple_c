@@ -1,0 +1,144 @@
+#!/usr/bin/env python
+
+import sys
+
+import wx
+
+import compiler.parser as parser
+import compiler.optimizer as optimizer
+import simulator.simulator as simulator
+import assembler.assembler as assembler
+
+description = {
+0 : "start",
+1 : "end",
+2 : "offset",
+3 : "new",
+4 : "temp",
+5 : "temp1",
+14 : "return_value",
+15 : "return_address"}
+
+class BlockFrame(wx.Frame):
+
+    def __init__(self, *args, **kwargs):
+
+        #draw windows
+        wx.Frame.__init__(self, *args, **kwargs)
+
+        #make instruction window
+        instructions = wx.ListCtrl(self, style=wx.LC_REPORT|wx.SUNKEN_BORDER)
+        instructions.InsertColumn(0, "Address")
+        instructions.InsertColumn(1, "mnemonic")
+        instructions.InsertColumn(2, "dest")
+        instructions.InsertColumn(3, "srca")
+        instructions.InsertColumn(4, "srcb")
+        self.instructions = instructions
+
+        #make memory window
+        memory = wx.ListCtrl(self, style=wx.LC_REPORT|wx.SUNKEN_BORDER)
+        memory.InsertColumn(0, "Address")
+        memory.InsertColumn(1, "Data")
+        self.memory = memory
+
+        #make registers window
+        registers = wx.ListCtrl(self, style=wx.LC_REPORT|wx.SUNKEN_BORDER)
+        registers.InsertColumn(0, "Designation")
+        registers.InsertColumn(1, "Address")
+        registers.InsertColumn(2, "Data")
+        self.registers = registers
+
+        #make toolbar
+        toolbar = wx.BoxSizer(wx.HORIZONTAL)
+        reset = wx.Button(self, -1, "Reset")
+        self.Bind(wx.EVT_BUTTON, self.on_reset, reset)
+        toolbar.Add(reset)
+        step = wx.Button(self, -1, "Step")
+        self.Bind(wx.EVT_BUTTON, self.on_step, step)
+        toolbar.Add(step)
+        steps = wx.SpinCtrl(self, -1)
+        steps.SetRange(0, 10000)
+        steps.SetValue(1)
+        toolbar.Add(wx.StaticText(self, -1, "steps:"), 0, wx.CENTRE)
+        toolbar.Add(steps)
+        self.steps = steps
+        run = wx.Button(self, -1, "Run")
+        self.Bind(wx.EVT_BUTTON, self.on_run, run)
+        toolbar.Add(run)
+        breakpoint = wx.SpinCtrl(self, -1)
+        breakpoint.SetRange(0, 10000)
+        breakpoint.SetValue(3)
+        self.breakpoint = breakpoint
+        toolbar.Add(wx.StaticText(self, -1, "breakpoint:"), 0, wx.CENTRE)
+        toolbar.Add(breakpoint)
+
+        #layout windows
+        windows = wx.BoxSizer(wx.HORIZONTAL)
+        windows.Add(instructions, 2, wx.EXPAND)
+        windows.Add(registers, 1, wx.EXPAND)
+        windows.Add(memory, 1, wx.EXPAND)
+
+        #layout main window
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(toolbar, 0, wx.EXPAND)
+        sizer.Add(windows, 1, wx.EXPAND)
+        self.SetSizer(sizer)
+
+        self.on_reset(None)
+
+
+    def draw_processor_instructions(self):
+        for address, instruction in enumerate(self.simulator.instructions):
+            mnemonic, dest, srca, srcb = instruction
+            self.instructions.Append((address, mnemonic, dest, srca, srcb))
+        self.instructions.SetItemBackgroundColour(self.simulator.program_counter, "blue")
+
+    def on_run(self, event):
+        breakpoint = self.breakpoint.GetValue()
+        while self.simulator.program_counter != breakpoint:
+            self.instructions.SetItemBackgroundColour(self.simulator.program_counter, "light blue")
+            self.simulator.execute()
+            self.instructions.Focus(self.simulator.program_counter)
+        self.instructions.SetItemBackgroundColour(self.simulator.program_counter, "blue")
+        self.registers.DeleteAllItems()
+        for address, value in self.simulator.registers.iteritems():
+            self.registers.Append((description.get(address, ""), address, value))
+        self.memory.DeleteAllItems()
+        for address, value in self.simulator.memory.iteritems():
+            self.memory.Append((address, value))
+
+    def on_step(self, event):
+        steps = self.steps.GetValue()
+        for i in range(steps):
+            self.instructions.SetItemBackgroundColour(self.simulator.program_counter, "light blue")
+            self.simulator.execute()
+            self.instructions.Focus(self.simulator.program_counter)
+        self.instructions.SetItemBackgroundColour(self.simulator.program_counter, "blue")
+        self.registers.DeleteAllItems()
+        for address, value in self.simulator.registers.iteritems():
+            self.registers.Append((description.get(address, ""), address, value))
+        self.memory.DeleteAllItems()
+        for address, value in self.simulator.memory.iteritems():
+            self.memory.Append((address, value))
+
+    def on_reset(self, reset):
+        #compile the file
+        input_file = open(sys.argv[1], 'r')
+        input_file = input_file.read()
+        theparser = parser.Parser()
+        instructions = theparser.parse(input_file).generate_code()
+        instructions = optimizer.optimize(instructions)
+        instructions = assembler.assemble(instructions)
+        self.simulator = simulator.Simulator(instructions)
+        self.instructions.DeleteAllItems()
+        self.registers.DeleteAllItems()
+        self.memory.DeleteAllItems()
+
+        self.draw_processor_instructions()
+
+
+
+#Create an application and show the main window
+app = wx.App()
+BlockFrame(None, size=(1024,768), title="Simulator").Show()
+app.MainLoop()

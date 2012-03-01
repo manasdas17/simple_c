@@ -1,21 +1,44 @@
 """Define the nodes of the pass tree"""
-from exceptions import ConstantError
+from exceptions import CConstantError, CTypeError
+from common import c_style_division, c_style_modulo
+from registers import *
 
 def constant_fold(potential_constant):
     if potential_constant is None:
         return None
     try:
         return Constant(potential_constant.value())
-    except ConstantError:
+    except CConstantError:
         return potential_constant
 
-class Constant:
+class CompilationUnit:
+    def __init__(self, declarations, main):
+        self.declarations = declarations
+        self.main = main
 
+    def generate_code(self):
+        instructions = [
+            ("literal", end, 0, 0),
+            ("literal", start, 0, 0),
+            ("jump and link", return_address, 0, self.main),
+            ("label", "end", 0, 0),
+            ("goto", 0, 0, "end"),
+        ]
+        for declaration in self.declarations:
+            instructions.extend(declaration.generate_code())
+
+        return instructions
+
+class Constant:
     def __init__(self, constant):
         self.constant = constant
 
     def generate_code(self):
-        print "memory[end++] = ", self.constant
+        return [
+            ("literal", temp, 0, self.constant),
+            ("store", 0, end, temp),
+            ("addl", end, end, 1),
+        ]
 
     def value(self):
         return self.constant
@@ -32,11 +55,15 @@ class Variable:
         self.name = name
 
     def generate_code(self):
-        print "#variable", self.name, "at offset", self.declarator.offset
-        print "memory[end++] = memory[start +", self.declarator.offset, "]"
+        return [
+            ("addl", offset, start, self.declarator.offset),
+            ("load", temp, offset, 0),
+            ("store", 0, end, temp),
+            ("addl", end, end, 1),
+        ]
 
     def value(self):
-        raise ConstantError("Variable is not a constant")
+        raise CConstantError("Variable is not a constant")
 
     def _type(self):
         return self.declarator._type
@@ -46,8 +73,10 @@ class Declare:
         self.declarators = declarators
 
     def generate_code(self):
+        instructions = []
         for declarator in self.declarators:
-            declarator.generate_code()
+            instructions.extend(declarator.generate_code())
+        return instructions
 
 class Declarator:
     def __init__(self, size, expression, name, offset, _type):
@@ -58,24 +87,31 @@ class Declarator:
         self._type = _type
 
     def generate_code(self):
-        print "# declare variable", self.name, 'of type "', self._type, '" at offset', self.offset
-        print "end +=", self.size
+        instructions = [("addl", end, end, self.size)]
         if self.expression:
-            self.expression.generate_code()
-            print "memory[end++] = memory[start+", self.offset, "]"
+            #initialise expression
+            instructions.extend(self.expression.generate_code())
+            #pop
+            instructions.append(("addl", end, end, -1))
+            instructions.append(("load", temp, end, 0))
+            #put in variable
+            instructions.append(("addl", offset, start, self.offset))
+            instructions.append(("store", 0, offset, temp))
+        return instructions
 
 class DeclareFunction:
 
-    def __init__(self, args, statement):
+    def __init__(self, args, statement, _type):
         self.args = args
         self.statement = statement
+        self._type =_type
 
     def generate_code(self):
-        print ""
-        print "label", id(self)
-        self.statement.generate_code()
-        print "return"
-        print ""
+        print self.statement
+        instructions = [("label", str(id(self)), 0, 0)] 
+        instructions.extend(self.statement.generate_code())
+        instructions.append(("goto register", 0, return_address, 0))
+        return instructions
 
 class If:
 
@@ -85,12 +121,17 @@ class If:
         self.false = false
 
     def generate_code(self):
-        self.expression.generate_code()
-        print "if !memory[--end] goto", id(self)
-        self.true.generate_code()
-        print "label", id(self)
+        instructions = self.expression.generate_code()
+        instructions.extend([
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+            ("jump if false", 0, temp, str(id(self)))
+        ])
+        instructions.extend(self.true.generate_code())
+        instructions.append(("label", str(id(self), 0, 0)))
         if self.false:
-            self.false.generate_code()
+            instructions.extend(self.false.generate_code())
+        return instructions
 
 class While:
 
@@ -99,12 +140,19 @@ class While:
         self.statement = statement
 
     def generate_code(self):
-        print "label", id(self), "while"
-        self.expression.generate_code()
-        print "if !memory[--end] goto", id(self), "end_while"
-        self.statement.generate_code()
-        print "goto", id(self), "while"
-        print "label", id(self), "end_while"
+        instructions = [("label", str(id(self))+"while", 0, 0)]
+        instructions.extend(self.expression.generate_code())
+        instructions.extend([
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+            ("jump if false", 0, temp, str(id(self)) + "end_while")
+        ])
+        instructions.extend(self.statement.generate_code())
+        instructions.extend([
+            ("goto", 0, 0, str(id(self)) + "while"),
+            ("label", str(id(self)) + "end_while", 0, 0)
+        ])
+        return instructions
 
 class DoWhile:
 
@@ -113,33 +161,26 @@ class DoWhile:
         self.statement = statement
 
     def generate_code(self):
-        print "label", id(self)+"do"
-        self.statement.generate_code()
-        self.expression.generate_code()
-        print "if !memory[--end] goto", id(self), "end_while"
-        print "goto", id(self), "do"
-        print "label", id(self), "end_while"
+        instructions = [("label", str(id(self))+"do", 0, 0)]
+        instructions.extend(self.statement.generate_code())
+        instructions.extend(self.expression.generate_code())
+        instructions.extend([
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+            ("jump if false", 0, temp, str(id(self)) + "end_while")
+            ("goto", 0, 0, str(id(self)) + "do"),
+            ("label", str(id(self))+"end_while", 0, 0)
+        ])
 
-class For:
-
-    def __init__(self, initialise, expression, iterate, statement):
-        self.initialise = constant_fold(initialise)
-        self.expression = constant_fold(expression)
-        self.iterate = constant_fold(iterate)
-        self.statement = statement
-
-    def generate_code(self):
-        if self.initialise:
-            self.initialise.generate_code()
-        print "label", id(self), "while"
-        if self.expression:
-            self.expression.generate_code()
-            print "if !memory[--end] goto", id(self), "end_while"
-        self.statement.generate_code()
-        if self.iterate:
-            self.iterate.generate_code()
-        print "goto", id(self), "while"
-        print "label", id(self), "end_while"
+def For(self, initialise, expression, iterate, statement):
+    return Block(
+            [], 
+            [
+                initialise,
+                While(expression, statment),
+                iterate
+            ]
+    )
 
 class Return:
 
@@ -147,8 +188,12 @@ class Return:
         self.expression = constant_fold(expression)
 
     def generate_code(self):
-        self.expression.generate_code()
-        print "return"
+        print self.expression
+        instructions = self.expression.generate_code()
+        instructions.append(("addl", end, end, -1))
+        instructions.append(("load", return_value, end, 0))
+        instructions.append(("goto register", 0, return_address, 0))
+        return instructions
 
 class FunctionCall:
 
@@ -157,28 +202,33 @@ class FunctionCall:
         self.declaration = declaration
 
     def generate_code(self):
-        print "memory[end++] = start"
-        print "memory[end++] = return address"
-        print "new = end"
-        for n, arg in enumerate(self.args):
-            arg.generate_code()
-        print "start = new"
-        print "call", id(self.declaration)
-        print "end = start"
-        print "return_address = memory[--end]"
-        print "start = memory[--end]"
+        instructions = [
+          ("store", 0, end, start),
+          ("addl", end, end, 1),
+          ("store", 0, end, return_address),
+          ("addl", end, end, 1),
+          ("addl", new, end, 0),
+        ]
+        for arg in self.args:
+            instructions.extend(arg.generate_code())
+        instructions.extend([
+          ("addl", start, new, 0),
+          ("jump and link", return_address, 0, str(id(self.declaration))),
+          ("addl", end, start, 0),
+          ("addl", end, end, -1),
+          ("load", return_address, end, 0),
+          ("addl", end, end, -1),
+          ("load", start, end, 0),
+          ("store", 0, end, return_value),
+          ("addl", end, end, 1),
+        ])
+        return instructions
 
-    def value():
-        raise Exception("Expression is not a constant")
+    def value(self):
+        raise CConstantError("Expression is not a constant")
 
-def sign(x):
-    return -1 if x < 0 else 1
-
-def c_style_modulo(x, y):
-    return sign(x)*(abs(x)%abs(y))
-
-def c_style_division(x, y):
-    return sign(x)*sign(y)*(abs(x)//abs(y))
+    def _type(self):
+        return self.declaration._type
 
 class Binary:
 
@@ -188,15 +238,42 @@ class Binary:
         self.function = function
 
         if self.left._type() != "int":
-            raise TypeError("only integer operands are supported")
+            raise CTypeError("only integer operands are supported")
         if self.right._type() != "int":
-            raise TypeError("only integer operands are supported")
+            raise CTypeError("only integer operands are supported")
 
 
     def generate_code(self):
-        self.left.generate_code()
-        self.right.generate_code()
-        print "memory[end++] = memory[--end]", self.function, "memory[--end]"
+        operations = {
+            "+" : "add",
+            "-" : "sub",
+            "*" : "mul",
+            "/" : "div",
+            "%" : "mod",
+            "<<" : "lshift",
+            ">>" : "rshift",
+            "&" : "and",
+            "|" : "or",
+            "^" : "xor",
+            "&&" : "blah",
+            "||" : "blahblah",
+            "==" : "eq",
+            "!=" : "ne",
+            "<=" : "le",
+            ">=" : "ge",
+            "<" : "lt",
+            ">" : "gt",
+        }
+        instructions = self.left.generate_code()
+        instructions.extend(self.right.generate_code())
+        instructions.append(("addl", end, end, -1))
+        instructions.append(("load", temp, end, 0))
+        instructions.append(("addl", end, end, -1))
+        instructions.append(("load", temp1, end, 0))
+        instructions.append((operations[self.function], temp, temp1, temp))
+        instructions.append(("store", 0, end, temp))
+        instructions.append(("addl", end, end, 1))
+        return instructions
 
     def value(self):
         functions = {
@@ -221,7 +298,7 @@ class Binary:
         }
         return functions[self.function](self.left.value(), self.right.value())
 
-    def _type():
+    def _type(self):
         return "int"
 
 class Unary:
@@ -230,11 +307,20 @@ class Unary:
         self.expression = constant_fold(expression)
         self.function = function
         if self.expression._type() != "int":
-            raise TypeError("only integer operands are supported")
+            raise CTypeError("only integer operands are supported")
 
     def generate_code(self):
-        self.expression.generate_code()
-        print "memory[end++] =", self.function, "memory[--end]"
+        operations = { "!" : "not", "~" : "invert", "-" : "negate"}
+        instructions = self.expression.generate_code()
+        if self.function != "+":
+            instructions.extend([
+                ("addl", end, end, -1),
+                ("load", temp, end, 0),
+                (operations[self.function], temp, end, 0),
+                ("store", end, temp, 0),
+                ("addl", end, end, 1),
+            ])
+        return instructions
 
     def value(self):
         functions = {
@@ -243,10 +329,10 @@ class Unary:
             "-" : lambda x:-x,
             "+" : lambda x:+x,
         }
-        return functions[self.function](self.left.value(), self.right.value())
+        return functions[self.function](self.expression.value())
 
     def _type():
-        return "int"
+        return self.expression._type()
 
 class PostIncrement:
     def __init__(self, declarator):
@@ -257,9 +343,10 @@ class PostIncrement:
         print "memory[end++] = memory[start+", self.declarator.offset, "]"
         print "memory[start+", self.declarator.offset, "] + memory[--end] + 1"
         print "end++"
+        return []
 
     def value(self):
-        raise ConstantError("Expression is not a constant")
+        raise CConstantError("Expression is not a constant")
 
     def _type(self):
         return self.declarator._type
@@ -273,9 +360,10 @@ class PostDecrement:
         print "memory[end++] = memory[start+", self.declarator.offset, "]"
         print "memory[start+", self.declarator.offset, "] + memory[--end] - 1"
         print "end++"
+        return []
 
     def value(self):
-        raise ConstantError("Expression is not a constant")
+        raise CConstantError("Expression is not a constant")
 
     def _type(self):
         return self.declarator._type
@@ -289,9 +377,10 @@ class PreIncrement:
         print "memory[end++] = memory[start+", self.declarator.offset, "]"
         print "memory[start+", self.declarator, "] + memory[--end] + 1"
         print "memory[end++] = memory[start+", self.declarator.offset, "]"
+        return []
 
     def value(self):
-        raise ConstantError("Expression is not a constant")
+        raise CConstantError("Expression is not a constant")
 
     def _type(self):
         return self.declarator._type
@@ -305,9 +394,10 @@ class PreDecrement:
         print "memory[end++] = memory[start+", self.declarator.offset, "]"
         print "memory[start+", self.declarator.offset, "] + memory[--end] - 1"
         print "memory[end++] = memory[start+", self.declarator.offset, "]"
+        return []
 
     def value(self):
-        raise ConstantError("Expression is not a constant")
+        raise CConstantError("Expression is not a constant")
 
     def _type(self):
         return self.declarator._type
@@ -319,10 +409,12 @@ class Block:
         self.statements = statements
 
     def generate_code(self):
+        instructions = []
         for declaration in self.declarations:
-            declaration.generate_code()
+            instructions.extend(declaration.generate_code())
         for statement in self.statements:
-            statement.generate_code()
+            instructions.extend(statement.generate_code())
+        return instructions
 
 class Discard:
 
@@ -330,8 +422,9 @@ class Discard:
         self.expression = expression
 
     def generate_code(self):
-        self.expression.generate_code()
-        print "end--"
+        instructions = self.expression.generate_code()
+        instructions.append(("addl", end, end, -1))
+        return instructions
 
 class Assignment:
 
@@ -339,16 +432,20 @@ class Assignment:
         self.declarator = declarator
         self.expression = constant_fold(expression)
         if self.declarator._type != self.expression._type():
-            raise TypeError("Cannot assign " + self.expression._type() + 
+            raise CTypeError("Cannot assign " + self.expression._type() + 
             " to " + self.declarator._type)
 
     def generate_code(self):
-        self.expression.generate_code()
-        print "memory[start+", self.declarator.offset, "] = memory[--end]"
-        print "end++" #leave variable on top of stack
+        instructions = self.expression.generate_code()
+        instructions.append(("addl", end, end, -1))
+        instructions.append(("load", temp, end, 0))
+        instructions.append(("addl", end, end, 1))
+        instructions.append(("addl", offset, start, self.declarator.offset))
+        instructions.append(("store", 0, offset, temp))
+        return instructions
 
     def value(self):
-        raise ConstantError("Expression is not a constant")
+        raise CConstantError("Expression is not a constant")
 
     def _type(self):
         return self.declarator._type
