@@ -107,7 +107,6 @@ class DeclareFunction:
         self._type =_type
 
     def generate_code(self):
-        print self.statement
         instructions = [("label", str(id(self)), 0, 0)] 
         instructions.extend(self.statement.generate_code())
         instructions.append(("goto register", 0, return_address, 0))
@@ -138,19 +137,21 @@ class While:
     def __init__(self, expression, statement):
         self.expression = constant_fold(expression)
         self.statement = statement
+        if hasattr(statement, "set_surrounding_statement"):
+            statement.set_surrounding_statement(self)
 
     def generate_code(self):
-        instructions = [("label", str(id(self))+"while", 0, 0)]
+        instructions = [("label", str(id(self))+"start", 0, 0)]
         instructions.extend(self.expression.generate_code())
         instructions.extend([
             ("addl", end, end, -1),
             ("load", temp, end, 0),
-            ("jump if false", 0, temp, str(id(self)) + "end_while")
+            ("jump if false", 0, temp, str(id(self)) + "end")
         ])
         instructions.extend(self.statement.generate_code())
         instructions.extend([
-            ("goto", 0, 0, str(id(self)) + "while"),
-            ("label", str(id(self)) + "end_while", 0, 0)
+            ("goto", 0, 0, str(id(self)) + "start"),
+            ("label", str(id(self)) + "end", 0, 0)
         ])
         return instructions
 
@@ -159,17 +160,19 @@ class DoWhile:
     def __init__(self, expression, statement):
         self.expression = constant_fold(expression)
         self.statement = statement
+        if hasattr(statement, "set_surrounding_statement"):
+            statement.set_surrounding_statement(self)
 
     def generate_code(self):
-        instructions = [("label", str(id(self))+"do", 0, 0)]
+        instructions = [("label", str(id(self))+"start", 0, 0)]
         instructions.extend(self.statement.generate_code())
         instructions.extend(self.expression.generate_code())
         instructions.extend([
             ("addl", end, end, -1),
             ("load", temp, end, 0),
-            ("jump if false", 0, temp, str(id(self)) + "end_while")
-            ("goto", 0, 0, str(id(self)) + "do"),
-            ("label", str(id(self))+"end_while", 0, 0)
+            ("jump if false", 0, temp, str(id(self)) + "end")
+            ("goto", 0, 0, str(id(self)) + "start"),
+            ("label", str(id(self))+"end", 0, 0)
         ])
 
 def For(self, initialise, expression, iterate, statement):
@@ -188,7 +191,6 @@ class Return:
         self.expression = constant_fold(expression)
 
     def generate_code(self):
-        print self.expression
         instructions = self.expression.generate_code()
         instructions.append(("addl", end, end, -1))
         instructions.append(("load", return_value, end, 0))
@@ -415,6 +417,29 @@ class Block:
         for statement in self.statements:
             instructions.extend(statement.generate_code())
         return instructions
+
+    def set_surrounding_statement(self, s):
+        for statement in self.statements:
+            print s
+            if hasattr(statement, "set_surrounding_statement"):
+                statement.set_surrounding_statement(s)
+
+class Break:
+
+    def generate_code(self):
+        return [("goto", 0, 0, str(id(self.surrounding_statement))+"end")]
+
+    def set_surrounding_statement(self, statement):
+        print "break", statement
+        self.surrounding_statement = statement
+
+class Continue:
+
+    def generate_code(self):
+        return [("goto", 0, 0, str(id(self.surrounding_statement))+"start")]
+
+    def set_surrounding_statement(self, statement):
+        self.surrounding_statement = statement
 
 class Discard:
 

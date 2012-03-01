@@ -132,6 +132,10 @@ class Parser:
             return self.parse_for()
         elif self.tokens.check("return"):
             return self.parse_return()
+        elif self.tokens.check("break"):
+            return self.parse_break()
+        elif self.tokens.check("continue"):
+            return self.parse_continue()
         else:
             expression = self.parse_expression()
             self.tokens.expect(";")
@@ -228,6 +232,22 @@ class Parser:
         expression = self.parse_expression()
         self.tokens.expect(";")
         return Return(expression)
+
+    def parse_break(self):
+
+        """Parse a break statement."""
+
+        self.tokens.expect("break")
+        self.tokens.expect(";")
+        return Break()
+
+    def parse_continue(self):
+
+        """Parse a continue statement."""
+
+        self.tokens.expect("continue")
+        self.tokens.expect(";")
+        return Continue()
 
     def parse_declare(self):
 
