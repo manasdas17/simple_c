@@ -1,5 +1,5 @@
 """Define the nodes of the pass tree"""
-from exceptions import CConstantError, CTypeError
+from exceptions import CConstantError, CTypeError, CSyntaxError
 from common import c_style_division, c_style_modulo
 from registers import *
 
@@ -105,6 +105,9 @@ class DeclareFunction:
         self.args = args
         self.statement = statement
         self._type =_type
+        self.labels = {}
+        if hasattr(statement, "set_surrounding_function"):
+            statement.set_surrounding_function(self)
 
     def generate_code(self):
         instructions = [("label", str(id(self)), 0, 0)] 
@@ -131,6 +134,79 @@ class If:
         if self.false:
             instructions.extend(self.false.generate_code())
         return instructions
+
+class Switch:
+
+    def __init__(self, expression, statement):
+        self.expression = constant_fold(expression)
+        self.statement = statement
+        self.cases = {}
+        if hasattr(statement, "set_surrounding_statement"):
+            statement.set_surrounding_statement(self)
+
+    def generate_code(self):
+        instructions = self.expression.generate_code()
+        instructions.extend([
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+        ])
+        for case_value, case in self.cases.iteritems():
+            instructions.extend([
+                ("literal", temp1, 0, case_value),
+                ("ne", temp1, temp, temp1),
+                ("jump if false", 0, temp1, str(id(case)))
+            ])
+        if hasattr(self, "default"):
+            instructions.extend([("goto", 0, 0, str(id(self.default)))])
+        instructions.extend([("goto", 0, 0, str(id(self))+"end")])
+        instructions.extend(self.statement.generate_code())
+        instructions.extend([("label", str(id(self)) + "end", 0, 0)])
+        return instructions
+
+class Case:
+
+    def __init__(self, expression):
+        self.expression = expression.value()
+
+    def generate_code(self):
+        return [("label", str(id(self)), 0, 0)]
+
+    def set_surrounding_statement(self, statement):
+        statement.cases[self.expression] = self
+
+class Default:
+
+    def generate_code(self):
+        return [("label", str(id(self)), 0, 0)]
+
+    def set_surrounding_statement(self, statement):
+        statement.default = self
+
+class Label:
+
+    def __init__(self, label):
+        self.label = label
+
+    def generate_code(self):
+        return [("label", str(id(self)), 0, 0)]
+
+    def set_surrounding_function(self, function):
+        function.labels[self.label] =  str(id(self))
+
+class Goto:
+    def __init__(self, label):
+        self.label = label
+
+    def generate_code(self):
+        try:
+            label = self.function.labels[self.label]
+        except KeyError:
+            raise CSyntaxError("Unknown Label")
+            
+        return [("goto", 0, 0, label)]
+
+    def set_surrounding_function(self, function):
+        self.function = function
 
 class While:
 
@@ -175,15 +251,16 @@ class DoWhile:
             ("label", str(id(self))+"end", 0, 0)
         ])
 
-def For(self, initialise, expression, iterate, statement):
-    return Block(
-            [], 
-            [
-                initialise,
-                While(expression, statment),
-                iterate
-            ]
-    )
+def For(initialise, expression, iterate, statement):
+    if iterate:
+        statement = Block([], [statement, iterate])
+    if expression:
+        loop = While(expression, statement)
+    else:
+        loop = While(Constant(-1), statement)
+    if initialise:
+        loop = Block([], [initialise, loop])
+    return loop
 
 class Return:
 
@@ -420,9 +497,13 @@ class Block:
 
     def set_surrounding_statement(self, s):
         for statement in self.statements:
-            print s
             if hasattr(statement, "set_surrounding_statement"):
                 statement.set_surrounding_statement(s)
+
+    def set_surrounding_function(self, s):
+        for statement in self.statements:
+            if hasattr(statement, "set_surrounding_function"):
+                statement.set_surrounding_function(s)
 
 class Break:
 
@@ -430,7 +511,6 @@ class Break:
         return [("goto", 0, 0, str(id(self.surrounding_statement))+"end")]
 
     def set_surrounding_statement(self, statement):
-        print "break", statement
         self.surrounding_statement = statement
 
 class Continue:

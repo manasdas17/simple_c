@@ -3,7 +3,7 @@ import os.path
 import scanner
 from tree import *
 import copy
-from exceptions import CTypeError, CConstantError
+from exceptions import CSyntaxError, CTypeError, CConstantError
 
 
 class Parser:
@@ -74,6 +74,8 @@ class Parser:
             self.syntax_error("Expression must be a constant")
         except CTypeError:
             self.syntax_error("Type error in expression")
+        except CSyntaxError:
+            self.syntax_error("Syntax error in expression")
 
         return instructions
 
@@ -136,6 +138,16 @@ class Parser:
             return self.parse_break()
         elif self.tokens.check("continue"):
             return self.parse_continue()
+        elif self.tokens.check("switch"):
+            return self.parse_switch()
+        elif self.tokens.check("default"):
+            return self.parse_default()
+        elif self.tokens.check("case"):
+            return self.parse_case()
+        elif self.tokens.check("goto"):
+            return self.parse_goto()
+        elif self.tokens.check_next(":"):
+            return self.parse_label()
         else:
             expression = self.parse_expression()
             self.tokens.expect(";")
@@ -210,6 +222,7 @@ class Parser:
 
         """Parse a for statement."""
 
+        initialise = expression = iterate = None
         self.tokens.expect("for")
         self.tokens.expect("(")
         if not self.tokens.check(";"):
@@ -240,6 +253,51 @@ class Parser:
         self.tokens.expect("break")
         self.tokens.expect(";")
         return Break()
+
+    def parse_switch(self):
+
+        """Parse a switch statement."""
+
+        self.tokens.expect("switch")
+        self.tokens.expect("(")
+        expression = self.parse_expression()
+        self.tokens.expect(")")
+        statement = self.parse_statement()
+        return Switch(expression, statement)
+
+    def parse_case(self):
+
+        """Parse a case statement."""
+
+        self.tokens.expect("case")
+        expression = self.parse_constant_expression()
+        self.tokens.expect(":")
+        return Case(expression)
+
+    def parse_goto(self):
+
+        """Parse a goto statement."""
+
+        self.tokens.expect("goto")
+        label = self.tokens.pop()
+        self.tokens.expect(";")
+        return Goto(label)
+
+    def parse_label(self):
+
+        """Parse a label statement."""
+
+        label = self.tokens.pop()
+        self.tokens.expect(":")
+        return Label(label)
+
+    def parse_default(self):
+
+        """Parse a default statement."""
+
+        self.tokens.expect("default")
+        self.tokens.expect(":")
+        return Default()
 
     def parse_continue(self):
 
@@ -301,13 +359,12 @@ class Parser:
                 expression = self.parse_expression()
                 try:
                     declarator = self.scope[variable]
-                    print declarator
                 except KeyError:
                     self.syntax_error("unknown identifier: " + variable)
                 if token == "=":
                     return Assignment(declarator, expression)
                 else:
-                    return Assignmen(declarator, Binary(Variable(declarator, variable), 
+                    return Assignment(declarator, Binary(Variable(declarator, variable), 
                     expression, token[:-1]))
         return self.parse_or_expression()
 

@@ -5,3 +5,7 @@ class CConstantError(Exception):
 class CTypeError(Exception):
     def __init__(self, message):
         Exception.__init__(self, message) 
+
+class CSyntaxError(Exception):
+    def __init__(self, message):
+        Exception.__init__(self, message) 
