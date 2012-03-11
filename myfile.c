@@ -1,13 +1,6 @@
 int main()
 {
-	int i=10, a=0;
+	int a, b;
 
-	for(;;){
-	  a+=1;
-	  i-=1;
-	  break;
-	}
-
-	return a;
-	
+	return sizeof (int);
 }

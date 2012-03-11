@@ -3,6 +3,8 @@ from exceptions import CConstantError, CTypeError, CSyntaxError
 from common import c_style_division, c_style_modulo
 from registers import *
 
+sizes = {"int" : 4, "float" : 4, "int*": 4, "float*":4}
+
 def constant_fold(potential_constant):
     if potential_constant is None:
         return None
@@ -11,7 +13,9 @@ def constant_fold(potential_constant):
     except CConstantError:
         return potential_constant
 
+
 class CompilationUnit:
+
     def __init__(self, declarations, main):
         self.declarations = declarations
         self.main = main
@@ -29,7 +33,9 @@ class CompilationUnit:
 
         return instructions
 
+
 class Constant:
+
     def __init__(self, constant):
         self.constant = constant
 
@@ -49,16 +55,42 @@ class Constant:
         elif type(self.constant) is float:
             return "float"
 
+    def size(self):
+        return sizes[self._type()]
+
+
 class Variable:
+
     def __init__(self, declarator, name):
         self.declarator = declarator
         self.name = name
 
     def generate_code(self):
         return [
+            #load
             ("addl", offset, start, self.declarator.offset),
             ("load", temp, offset, 0),
+            #push
             ("store", 0, end, temp),
+            ("addl", end, end, 1),
+        ]
+
+    def generate_code_write(self):
+        return [
+            #pop
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+            #push
+            ("addl", end, end, 1),
+            #store
+            ("addl", offset, start, self.declarator.offset),
+            ("store", 0, offset, temp)
+        ]
+
+    def generate_code_address(self):
+        return [
+            ("addl", temp, start, self.declarator.offset),
+            ("store", 0, end, temp)
             ("addl", end, end, 1),
         ]
 
@@ -68,7 +100,12 @@ class Variable:
     def _type(self):
         return self.declarator._type
 
+    def size(self):
+        return self.declarator.size
+
+
 class Declare:
+
     def __init__(self, declarators):
         self.declarators = declarators
 
@@ -78,13 +115,16 @@ class Declare:
             instructions.extend(declarator.generate_code())
         return instructions
 
+
 class Declarator:
+
     def __init__(self, size, expression, name, offset, _type):
         self.size = size
         self.expression = constant_fold(expression)
         self.name = name
         self.offset = offset
         self._type = _type
+        self.size = sizes[_type]
 
     def generate_code(self):
         instructions = [("addl", end, end, self.size)]
@@ -99,12 +139,14 @@ class Declarator:
             instructions.append(("store", 0, offset, temp))
         return instructions
 
+
 class DeclareFunction:
 
     def __init__(self, args, statement, _type):
         self.args = args
         self.statement = statement
         self._type =_type
+        self.size = sizes[_type]
         self.labels = {}
         if hasattr(statement, "set_surrounding_function"):
             statement.set_surrounding_function(self)
@@ -194,6 +236,7 @@ class Label:
         function.labels[self.label] =  str(id(self))
 
 class Goto:
+
     def __init__(self, label):
         self.label = label
 
@@ -309,6 +352,9 @@ class FunctionCall:
     def _type(self):
         return self.declaration._type
 
+    def size(self):
+        return self.declaration.size
+
 class Binary:
 
     def __init__(self, left, right, function):
@@ -380,6 +426,9 @@ class Binary:
     def _type(self):
         return "int"
 
+    def size(self):
+        return self.left.size()
+
 class Unary:
 
     def __init__(self, expression, function):
@@ -413,73 +462,123 @@ class Unary:
     def _type():
         return self.expression._type()
 
+    def size(self):
+        return self.expression.size()
+
+
 class PostIncrement:
-    def __init__(self, declarator):
-        self.declarator = declarator
+
+    def __init__(self, expression):
+        self.expression = expression
 
     def generate_code(self):
-        print "#post increment offset", self.declarator.offset
-        print "memory[end++] = memory[start+", self.declarator.offset, "]"
-        print "memory[start+", self.declarator.offset, "] + memory[--end] + 1"
-        print "end++"
-        return []
+        instructions = self.expression.generate_code()
+        instructions.extend([
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+            ("store", 0, end, temp),
+            ("addl", end, end, 1),
+            ("addl", temp, temp, 1),
+            ("store", 0, end, temp),
+            ("addl", end, end, 1),
+        ])
+        instructions.extend(self.expression.generate_code_write())
+        instructions.append(("addl", end, end, -1))
+        return instructions
 
     def value(self):
         raise CConstantError("Expression is not a constant")
 
     def _type(self):
-        return self.declarator._type
+        return self.expression._type()
+
+    def size(self):
+        return self.expression.size()
+
 
 class PostDecrement:
+
     def __init__(self, declarator):
         self.declarator = declarator
 
     def generate_code(self):
-        print "#post decrement declarator", self.declarator.offset
-        print "memory[end++] = memory[start+", self.declarator.offset, "]"
-        print "memory[start+", self.declarator.offset, "] + memory[--end] - 1"
-        print "end++"
-        return []
+        instructions = self.expression.generate_code()
+        instructions.extend([
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+            ("store", 0, end, temp),
+            ("addl", end, end, 1),
+            ("addl", temp, temp, -1),
+            ("store", 0, end, temp),
+            ("addl", end, end, 1),
+        ])
+        instructions.extend(self.expression.generate_code_write())
+        instructions.append(("addl", end, end, -1))
+        return instructions
 
     def value(self):
         raise CConstantError("Expression is not a constant")
 
     def _type(self):
-        return self.declarator._type
+        return self.expression._type()
+
+    def size(self):
+        return self.expression.size()
+
 
 class PreIncrement:
-    def __init__(self, declarator):
-        self.declarator = declarator
+
+    def __init__(self, expression):
+        self.expression = expression
 
     def generate_code(self):
-        print "#pre increment declarator", self.declarator.offset
-        print "memory[end++] = memory[start+", self.declarator.offset, "]"
-        print "memory[start+", self.declarator, "] + memory[--end] + 1"
-        print "memory[end++] = memory[start+", self.declarator.offset, "]"
-        return []
+        instructions = self.expression.generate_code()
+        instructions.extend([
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+            ("addl", temp, temp, 1),
+            ("store", 0, end, temp),
+            ("addl", end, end, 1),
+        ])
+        instructions.extend(self.expression.generate_code_write())
+        return instructions
 
     def value(self):
         raise CConstantError("Expression is not a constant")
 
     def _type(self):
-        return self.declarator._type
+        return self.expression._type()
+
+    def size(self):
+        return self.expression.size()
+
 
 class PreDecrement:
-    def __init__(self, declarator):
-        self.declarator = declarator
+
+    def __init__(self, expression):
+        self.expression = expression
 
     def generate_code(self):
-        print "#pre deccrement declarator", self.declarator.offset
-        print "memory[end++] = memory[start+", self.declarator.offset, "]"
-        print "memory[start+", self.declarator.offset, "] + memory[--end] - 1"
-        print "memory[end++] = memory[start+", self.declarator.offset, "]"
-        return []
+        instructions = self.expression.generate_code()
+        instructions.extend([
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+            ("addl", temp, temp, -1),
+            ("store", 0, end, temp),
+            ("addl", end, end, 1),
+        ])
+        instructions.extend(self.expression.generate_code_write())
+        return instructions
 
     def value(self):
         raise CConstantError("Expression is not a constant")
 
     def _type(self):
-        return self.declarator._type
+        return self.expression._type()
+
+    def size(self):
+        return self.expression.size()
+
 
 class Block:
 
@@ -505,6 +604,7 @@ class Block:
             if hasattr(statement, "set_surrounding_function"):
                 statement.set_surrounding_function(s)
 
+
 class Break:
 
     def generate_code(self):
@@ -513,6 +613,7 @@ class Break:
     def set_surrounding_statement(self, statement):
         self.surrounding_statement = statement
 
+
 class Continue:
 
     def generate_code(self):
@@ -520,6 +621,7 @@ class Continue:
 
     def set_surrounding_statement(self, statement):
         self.surrounding_statement = statement
+
 
 class Discard:
 
@@ -531,26 +633,119 @@ class Discard:
         instructions.append(("addl", end, end, -1))
         return instructions
 
+
 class Assignment:
 
-    def __init__(self, declarator, expression):
-        self.declarator = declarator
-        self.expression = constant_fold(expression)
-        if self.declarator._type != self.expression._type():
-            raise CTypeError("Cannot assign " + self.expression._type() + 
-            " to " + self.declarator._type)
+    def __init__(self, left, right):
+        self.left = left
+        self.right = constant_fold(right)
+        print left, right
+        if self.left._type() != self.right._type():
+            raise CTypeError("Cannot assign " + self.right._type() + 
+            " to " + self.left._type())
 
     def generate_code(self):
-        instructions = self.expression.generate_code()
-        instructions.append(("addl", end, end, -1))
-        instructions.append(("load", temp, end, 0))
-        instructions.append(("addl", end, end, 1))
-        instructions.append(("addl", offset, start, self.declarator.offset))
-        instructions.append(("store", 0, offset, temp))
+        instructions = self.right.generate_code()
+        instructions.extend(self.left.generate_code_write())
         return instructions
 
     def value(self):
         raise CConstantError("Expression is not a constant")
 
     def _type(self):
-        return self.declarator._type
+        return self.left._type()
+
+    def size(self):
+        return self.left.size()
+
+
+class SizeOf:
+
+    def __init__(self, expression):
+        self.size = expression.size()
+        self.expression = Constant(self.size)
+
+    def generate_code(self):
+        return self.expression.generate_code()
+
+    def value(self):
+        return self.size
+
+    def _type(self):
+        return "int"
+
+
+def SizeOfType(_type):
+    return Constant(sizes[_type])
+
+
+class Address:
+
+    def __init__(self, expression):
+        self.expression = expression
+
+    def generate_code(self):
+        return self.expression.gererate_code_address()
+
+    def value(self):
+        raise CConstantError("Expression is not a constant")
+
+    def _type(self):
+        return self.expression._type() + "*"
+
+    def size(self):
+        return sizes[self._type()]
+
+
+class Dereference:
+
+    def __init__(self, expression):
+        self.expression = expression
+
+    def generate_code(self):
+        instructions = self.expression.generate_code()
+        instructions.extend([
+            #pop
+            ("addl", end, end, -1),
+            ("load", offset, end, 0),
+            #load
+            ("load", temp, offset, 0),
+            #push
+            ("store", 0, end, temp),
+            ("addl", end, end, 1),
+        ])
+        return instructions
+
+    def generate_code_write(self):
+        instructions = self.expression.generate_code()
+        return [
+            #pop
+            ("addl", end, end, -1),
+            ("load", offset, end, 0),
+            #pop
+            ("addl", end, end, -1),
+            ("load", temp, end, 0),
+            #push
+            ("addl", end, end, 1),
+            #store
+            ("store", 0, offset, temp)
+        ]
+
+    def generate_code_address(self):
+        return [
+            ("addl", temp, start, self.declarator.offset),
+            #push
+            ("store", 0, end, temp)
+            ("addl", end, end, 1),
+        ]
+
+    def value(self):
+        raise CConstantError("Dereferenced pointer is not a constant")
+
+    def _type(self):
+        if not self.expression._type().endswith("*"):
+            raise CTypeError("Expression is not a pointer")
+        return self.expression._type()[:-1]
+
+    def size(self):
+        return sizes[self._type()]

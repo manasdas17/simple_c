@@ -354,19 +354,16 @@ class Parser:
         for token in ["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "&=", 
             "|=", "^="]:
             if self.tokens.check_next(token):
-                variable = self.tokens.pop()
+                variable = self.parse_unary_expression()
                 self.tokens.expect(token)
                 expression = self.parse_expression()
-                try:
-                    declarator = self.scope[variable]
-                except KeyError:
-                    self.syntax_error("unknown identifier: " + variable)
                 if token == "=":
-                    return Assignment(declarator, expression)
+                    return Assignment(variable, expression)
                 else:
-                    return Assignment(declarator, Binary(Variable(declarator, variable), 
-                    expression, token[:-1]))
-        return self.parse_or_expression()
+                    return Assignment(variable, 
+                    Binary(variable, expression, token[:-1]))
+        expression = self.parse_or_expression()
+        return expression
 
     def parse_or_expression(self):
 
@@ -482,32 +479,33 @@ class Parser:
 
         """Parse a unary expression."""
 
-        while self.tokens.peek() in ["&", "*", "-", "+", "!", "~"]:
+        if self.tokens.peek() in ["-", "+", "!", "~"]:
             function = self.tokens.pop()
-            return Unary(self.parse_paren_expression(), function)
+            return Unary(self.parse_unary_expression(), function)
+        elif self.tokens.check("&"):
+            return Address(self.parse_unary_expression())
+        elif self.tokens.check("*"):
+            return Dereference(self.parse_unary_expression())
+        elif self.tokens.peek() in ["++", "--"]:
+            return self.parse_prefix_expression()
+        elif self.tokens.check("sizeof"):
+            return self.parse_sizeof_expression()
         else:
-            return self.parse_paren_expression()
+            return self.parse_primary_expression()
 
-    def parse_paren_expression(self):
+    def parse_primary_expression(self):
 
-        """Parse a parenthesised expression."""
+        """Parse a primary expression."""
 
         if self.tokens.check("("):
             self.tokens.expect("(")
             expression = self.parse_expression()
             self.tokens.expect(")")
-        else:
-            expression = self.parse_numvar()
-        return expression
-
-    def parse_numvar(self):
-
-        """Parse a number, or identifier."""
-
-        if self.tokens.peek()[0].isdigit():
-            return self.parse_number()
+        elif self.tokens.peek()[0].isdigit():
+            expression = self.parse_number()
         elif self.tokens.peek()[0].isalpha():
-            return self.parse_identifier()
+            expression = self.parse_identifier()
+        return expression
 
     def parse_number(self):
 
@@ -516,39 +514,57 @@ class Parser:
         number =  self.tokens.pop() 
         return Constant(int(number))
 
+    def parse_sizeof_expression(self):
+
+        """Parse sizeof expression."""
+
+        self.tokens.expect("sizeof")
+        for token in ["int", "float"]:
+            if self.tokens.check("(") and self.tokens.check_next(token):
+                self.tokens.expect("(")
+                _type = self.tokens.pop()
+                self.tokens.expect(")")
+                return SizeOfType(_type)
+        return SizeOf(self.parse_unary_expression())
+
+    def parse_prefix_expression(self):
+
+        """Parse prefix expression."""
+
+        if self.tokens.check("++"):
+            self.tokens.expect("++")
+            return PreIncrement(self.parse_unary_expression())
+        else:
+            self.tokens.expect("--")
+            return PreDecrement(self.parse_unary_expression())
+
     def parse_identifier(self):
 
         """Parse a variable or function call."""
 
-        token = self.tokens.peek()
-        if token in ["++", "--"]:
-            self.tokens.expect(token)
-            name = self.tokens.pop()
+        name = self.tokens.pop()
+        if self.tokens.check("("):
+            expression = self.parse_function_call(name)
+        else:
             try:
                 declarator = self.scope[name]
             except KeyError:
                 self.syntax_error("unknown identifier: " + name)
-            if token == "++":
-                return PreIncrement(declarator)
-            else:
-                return PreDecrement(declarator)
-        else:
-            name = self.tokens.pop()
-            if self.tokens.check("("):
-                return self.parse_function_call(name)
-            else:
-                try:
-                    declarator = self.scope[name]
-                except KeyError:
-                    self.syntax_error("unknown identifier: " + name)
-                if self.tokens.check("++"):
-                    self.tokens.expect("++")
-                    return PostIncrement(declarator)
-                elif self.tokens.check("--"):
-                    self.tokens.expect("--")
-                    return PostDecrement(declarator)
-                else:
-                    return Variable(declarator, name)
+            expression = Variable(declarator, name)
+        while self.tokens.peek() in ["++", "--", "[", ".", "->"]:
+            expression = self.parse_postfix_expression(expression)
+        return expression
+
+    def parse_postfix_expression(self, expression):
+
+        """Parse a postfix expression."""
+
+        if self.tokens.check("++"):
+            self.tokens.expect("++")
+            return PostIncrement(expression)
+        elif self.tokens.check("--"):
+            self.tokens.expect("--")
+            return PostDecrement(expression)
 
     def parse_function_call(self, name):
 
@@ -563,12 +579,10 @@ class Parser:
             else:
                 break
         self.tokens.expect(")")
-
         try:
             function_declaration = self.scope[name]
         except KeyError:
             self.syntax_error("unknown identifier: " + name)
-
         if len(args) != len(function_declaration.args):
             self.syntax_error("wrong number of arguments")
         return FunctionCall(args, function_declaration)
