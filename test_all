@@ -1,0 +1,474 @@
+#!/usr/bin/env python
+
+import sys
+
+import compiler.parser as parser
+import compiler.optimizer as optimizer
+import simulator.simulator as simulator
+import assembler.assembler as assembler
+
+def test(name, expected_return_value, code):
+        theparser = parser.Parser()
+        instructions = theparser.parse(code).generate_code()
+        instructions = optimizer.optimize(instructions)
+        instructions = assembler.assemble(instructions)
+        thesimulator = simulator.Simulator(instructions)
+
+        while thesimulator.program_counter != 3:
+            thesimulator.execute()
+
+        if thesimulator.registers[14] == expected_return_value:
+            print name, "...pass"
+        else:
+            print name, "...fail"
+            print "expected:", expected_return_value, "actual:", thesimulator.registers[14]
+            print "ALL TESTS FAIL"
+            exit(0)
+
+test(name = "integer literal 1",
+     expected_return_value = 0,
+     code = "int main(){ return 0; }"
+)
+test(name = "integer literal 2",
+     expected_return_value = 1,
+     code = "int main(){ return 1; }"
+)
+test(name = "integer literal 3",
+     expected_return_value = 10,
+     code = "int main(){ return 10; }"
+)
+test(name = "integer literal 4",
+     expected_return_value = 0x10,
+     code = "int main(){ return 0x10; }"
+)
+test( name = "integer literal 5",
+     expected_return_value = 0x10,
+     code = "int main(){ return 0X10; }"
+)
+test( name = "integer literal 6",
+     expected_return_value = 0xabcdef,
+     code = "int main(){ return 0Xabcdef; }"
+)
+test( name = "integer literal 7",
+     expected_return_value = 0xABCDEF,
+     code = "int main(){ return 0xABCDEF; }"
+)
+test(name = "float literal 1",
+     expected_return_value = 0.0,
+     code = "int main(){ return 0.0; }"
+)
+test(name = "float literal 2",
+     expected_return_value = 1.0,
+     code = "int main(){ return 1.0; }"
+)
+test(name = "float literal 3",
+     expected_return_value = 10.0,
+     code = "int main(){ return 10.0; }"
+)
+test( name = "identifier 1",
+     expected_return_value = 0,
+     code = "int main(){ int a = 0; return a; }"
+)
+test( name = "identifier 2",
+     expected_return_value = 1,
+     code = "int main(){ int a = 1; return a; }"
+)
+test( name = "identifier 3",
+     expected_return_value = 10,
+     code = "int main(){ int a = 10; return a; }"
+)
+test(name = "assignment 1",
+     expected_return_value = 1,
+     code = "int main(){ int a = 10; a = 1; return a; }"
+)
+test(name = "assignment 2",
+     expected_return_value = 10,
+     code = "int main(){ int a = 10; a = 10; return a; }"
+)
+test(name = "assignment 3",
+     expected_return_value = 1,
+     code = "int main(){ int a = 10, b = 10; a = 1; b = 2; return a; }"
+)
+test(name = "assignment 4",
+     expected_return_value = 2,
+     code = "int main(){ int a = 10, b = 10; a = 1; b = 2; return b; }"
+)
+test(name = "assignment 5",
+     expected_return_value = 2,
+     code = "int main(){ int a = 10, b = 10; a = b = 2; return a; }"
+)
+test(name = "assignment 6",
+     expected_return_value = 2,
+     code = "int main(){ int a = 10, b = 10; a = b = 2; return b; }"
+)
+test(name = "assignment 7",
+     expected_return_value = 11,
+     code = "int main(){ int a = 10; a += 1; return a; }"
+)
+test(name = "assignment 8",
+     expected_return_value = 9,
+     code = "int main(){ int a = 10; a -= 1; return a; }"
+)
+test(name = "assignment 9",
+     expected_return_value = 20,
+     code = "int main(){ int a = 10; a *= 2; return a; }"
+)
+test(name = "assignment 10",
+     expected_return_value = 5,
+     code = "int main(){ int a = 10; a /= 2; return a; }"
+)
+test(name = "assignment 11",
+     expected_return_value = 10,
+     code = "int main(){ int a = 10; a &= 10; return a; }"
+)
+test(name = "assignment 12",
+     expected_return_value = 10,
+     code = "int main(){ int a = 10; a |= 10; return a; }"
+)
+test(name = "assignment 13",
+     expected_return_value = 10^10,
+     code = "int main(){ int a = 10; a ^= 10; return a; }"
+)
+test(name = "assignment 14",
+     expected_return_value = 10%10,
+     code = "int main(){ int a = 10; a %= 10; return a; }"
+)
+test(name = "binary 1",
+     expected_return_value = 1 + 2 + 3,
+     code = "int main(){ return 1 + 2 + 3; }"
+)
+test(name = "binary 2",
+     expected_return_value = 1 + 2 - 3,
+     code = "int main(){ return 1 + 2 - 3; }"
+)
+test(name = "binary 3",
+     expected_return_value = 1 + 2 - 3 * 4,
+     code = "int main(){ return 1 + 2 - 3 * 4; }"
+)
+test(name = "binary 4",
+     expected_return_value = 1 + 2 - 3 * 4 / 5,
+     code = "int main(){ return 1 + 2 - 3 * 4 / 5; }"
+)
+test(name = "binary 5",
+     expected_return_value = 1 + 2 - 3 * 4 / 5 % 6,
+     code = "int main(){ return 1 + 2 - 3 * 4 / 5 % 6; }"
+)
+test(name = "binary 6",
+     expected_return_value = 6 + 5 - 4 * 3 / 2 % 1,
+     code = "int main(){ return 6 + 5 - 4 * 3 / 2 % 1; }"
+)
+test(name = "binary 7",
+     expected_return_value =  3 & 5,
+     code = "int main(){ return 3 & 5; }"
+)
+test(name = "binary 8",
+     expected_return_value =  3 & 5 | 7,
+     code = "int main(){ return 3 & 5 | 7; }"
+)
+test(name = "binary 9",
+     expected_return_value =  9,
+     code = "int main(){ return 3 & 5 | 7 ^ 15; }"
+)
+test(name = "if 1",
+     expected_return_value = 0,
+     code = "int main(){if(-1){return 0;} return 1;}"
+)
+test(name = "if 2",
+     expected_return_value = 1,
+     code = "int main(){if(0){return 0;} return 1;}"
+)
+test(name = "if 3",
+     expected_return_value = 1,
+     code = "int main(){if(0){return 0;} else {return 1;} return 2;}"
+)
+test(name = "if 4",
+     expected_return_value = 0,
+     code = "int main(){if(1){return 0;} else {return 1;} return 2;}"
+)
+test(name = "if 5",
+     expected_return_value = 2,
+     code = "int main(){if(0){return 0;} else if(0) {return 1;} return 2;}"
+)
+test(name = "if 6",
+     expected_return_value = 0,
+     code = "int main(){if(1){return 0;} else if(0) {return 1;} return 2;}"
+)
+test(name = "if 7",
+     expected_return_value = 0,
+     code = "int main(){if(1){return 0;} else if(1) {return 1;} return 2;}"
+)
+test(name = "switch 1",
+     expected_return_value = 3,
+     code = """int main(){
+        switch(0){
+            case 0: return 3;
+            case 1: return 2;
+            case 2: return 1;
+            default: return 0;
+        }
+     }
+     """
+)
+test(name = "switch 2",
+     expected_return_value = 1,
+     code = """int main(){
+        switch(2){
+            case 0: return 3;
+            case 1: return 2;
+            case 2: return 1;
+            default: return 0;
+        }
+     }
+     """
+)
+test(name = "switch 3",
+     expected_return_value = 0,
+     code = """int main(){
+        switch(5){
+            case 0: return 3;
+            case 1: return 2;
+            case 2: return 1;
+            default: return 0;
+        }
+     }
+     """
+)
+test(name = "switch 4",
+     expected_return_value = 4,
+     code = """int main(){
+        int a = 0;
+        switch(0){
+            case 0: a = 1;
+            case 1: a = 2;
+            case 2: a = 3;
+            default: a = 4;
+        }
+        return a;
+     }
+     """
+)
+test(name = "switch 5",
+     expected_return_value = 4,
+     code = """int main(){
+        int a = 0;
+        switch(1){
+            case 0: a = 1;
+            case 1: a = 2;
+            case 2: a = 3;
+            default: a = 4;
+        }
+        return a;
+     }
+     """
+)
+test(name = "switch 6",
+     expected_return_value = 4,
+     code = """int main(){
+        int a = 1;
+        switch(10){
+            case 0: a = 1;
+            case 1: a = 2;
+            case 2: a = 3;
+            default: a = 4;
+        }
+        return a;
+     }
+     """
+)
+test(name = "switch 7",
+     expected_return_value = 1,
+     code = """int main(){
+        int a = 1;
+        switch(0){
+            case 0: a = 1; break;
+            case 1: a = 2; break;
+            case 2: a = 3; break;
+            default: a = 4; break;
+        }
+        return a;
+     }
+     """
+)
+test(name = "switch 8",
+     expected_return_value = 3,
+     code = """int main(){
+        int a = 1;
+        switch(2){
+            case 0: a = 1; break;
+            case 1: a = 2; break;
+            case 2: a = 3; break;
+            default: a = 4; break;
+        }
+        return a;
+     }
+     """
+)
+test(name = "switch 9",
+     expected_return_value = 4,
+     code = """int main(){
+        int a = 1;
+        switch(9){
+            case 0: a = 1; break;
+            case 1: a = 2; break;
+            case 2: a = 3; break;
+            default: a = 4; break;
+        }
+        return a;
+     }
+     """
+)
+test(name = "while 1",
+     expected_return_value = 1,
+     code = """int main(){
+        int a = 1;
+        while(0){
+         a = 0xf;
+        }
+        return a;
+     }
+     """
+)
+test(name = "while 2",
+     expected_return_value = 0,
+     code = """int main(){
+        int a = 1;
+        while(a){
+         a = 0;
+        }
+        return a;
+     }
+     """
+)
+test(name = "while 3",
+     expected_return_value = 3,
+     code = """int main(){
+        int a = 1;
+        while(a){
+         a = 3; break;
+        }
+        return a;
+     }
+     """
+)
+test(name = "while 4",
+     expected_return_value = 0,
+     code = """int main(){
+        int a = 1;
+        while(a){
+         a = 0;
+         continue;
+         a = 1;
+        }
+        return a;
+     }
+     """
+)
+test(name = "while 5",
+     expected_return_value = 10,
+     code = """int main(){
+        int a = 10;
+        int b = 0;
+        while(a){
+         a -= 1;
+         b += 1;
+        }
+        return b;
+     }
+     """
+)
+test(name = "while 6",
+     expected_return_value = 5,
+     code = """int main(){
+        int a = 10;
+        int b = 0;
+        while(1){
+         a -= 1;
+         b += 1;
+         {if(a == 5) break;}
+        }
+        return b;
+     }
+     """
+)
+test(name = "function 1",
+     expected_return_value = 0,
+     code = """
+     int func() return 0;
+     int main(){
+        return func();
+     }
+     """
+)
+test(name = "function 2",
+     expected_return_value = 0XFFF,
+     code = """
+     int func() return 0XFFF;
+     int main(){
+        return func();
+     }
+     """
+)
+test(name = "function 3",
+     expected_return_value = 12,
+     code = """
+     int func(int a) return a + 1;
+     int nested(int a) return func(a) + 1;
+     int main(){
+        return nested(10);
+     }
+     """
+)
+test(name = "function 4",
+     expected_return_value = 1,
+     code = """
+     int func(int a, int b) return a / b;
+     int main(){
+        return func(20, 20);
+     }
+     """
+)
+test(name = "function 5",
+     expected_return_value = 50,
+     code = """
+     int func(int a, int b) return a / b;
+     int nested(int a, int b) return func(a, b);
+     int main(){
+        return nested(100, 2);
+     }
+     """
+)
+test(name = "function 6",
+     expected_return_value = 10,
+     code = """
+     int func(int a){
+       if(a == 10){
+         return a;
+       } else {
+         return func(a+1);
+       }
+     }
+     int main(){
+        return func(1);
+     }
+     """
+)
+test(name = "function 7",
+     expected_return_value = 3628800,
+     code = """
+     int factorial(int a)
+     {
+       if (a == 1)
+       return 1;
+       else
+        {
+          a *= factorial(a-1);
+          return a;
+       }
+     }
+     int main(){
+        return factorial(10);
+     }
+     """
+)
+
+print "ALL TESTS PASS"

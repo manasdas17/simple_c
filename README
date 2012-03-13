@@ -1,0 +1,6 @@
+Simple C
+========
+
+A simple C compiler written in Python. The project aim is to create a C
+compiler that is as simple as possible. The compiler currently targets an
+imaginary CPU, for which there is a simple graphical simulator.
