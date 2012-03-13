@@ -3,13 +3,24 @@ from exceptions import CConstantError, CTypeError, CSyntaxError
 from common import c_style_division, c_style_modulo
 from registers import *
 
+
 sizes = {"int" : 4, "float" : 4, "int*": 4, "float*":4}
+def size(expression):
+    return sizes[expression._type()]
+
+
+def value(expression):
+    if hasattr(expression, "value"):
+        return expression.value()
+    else:
+        raise CConstantError("Expression is not a constant")
+
 
 def constant_fold(potential_constant):
     if potential_constant is None:
         return None
     try:
-        return Constant(potential_constant.value())
+        return Constant(value(potential_constant))
     except CConstantError:
         return potential_constant
 
@@ -55,9 +66,6 @@ class Constant:
         elif type(self.constant) is float:
             return "float"
 
-    def size(self):
-        return sizes[self._type()]
-
 
 class Variable:
 
@@ -90,18 +98,12 @@ class Variable:
     def generate_code_address(self):
         return [
             ("addl", temp, start, self.declarator.offset),
-            ("store", 0, end, temp)
+            ("store", 0, end, temp),
             ("addl", end, end, 1),
         ]
 
-    def value(self):
-        raise CConstantError("Variable is not a constant")
-
     def _type(self):
         return self.declarator._type
-
-    def size(self):
-        return self.declarator.size
 
 
 class Declare:
@@ -119,15 +121,13 @@ class Declare:
 class Declarator:
 
     def __init__(self, size, expression, name, offset, _type):
-        self.size = size
         self.expression = constant_fold(expression)
         self.name = name
         self.offset = offset
         self._type = _type
-        self.size = sizes[_type]
 
     def generate_code(self):
-        instructions = [("addl", end, end, self.size)]
+        instructions = [("addl", end, end, sizes[self._type])]
         if self.expression:
             #initialise expression
             instructions.extend(self.expression.generate_code())
@@ -142,12 +142,13 @@ class Declarator:
 
 class DeclareFunction:
 
-    def __init__(self, args, statement, _type):
+    def __init__(self, args, _type):
         self.args = args
-        self.statement = statement
         self._type =_type
-        self.size = sizes[_type]
         self.labels = {}
+
+    def define(self, statement):
+        self.statement = statement
         if hasattr(statement, "set_surrounding_function"):
             statement.set_surrounding_function(self)
 
@@ -172,10 +173,23 @@ class If:
             ("jump if false", 0, temp, str(id(self)))
         ])
         instructions.extend(self.true.generate_code())
-        instructions.append(("label", str(id(self), 0, 0)))
+        instructions.append(("label", str(id(self)), 0, 0))
         if self.false:
             instructions.extend(self.false.generate_code())
         return instructions
+
+    def set_surrounding_statement(self, s):
+        if hasattr(self.true, "set_surrounding_statement"):
+            self.true.set_surrounding_statement(s)
+        if self.false and hasattr(self.false, "set_surrounding_statement"):
+            self.false.set_surrounding_statement(s)
+
+    def set_surrounding_function(self, s):
+        if hasattr(self.true, "set_surrounding_function"):
+            self.true.set_surrounding_function(s)
+        if self.false and hasattr(self.false, "set_surrounding_function"):
+            self.false.set_surrounding_function(s)
+
 
 class Switch:
 
@@ -205,16 +219,18 @@ class Switch:
         instructions.extend([("label", str(id(self)) + "end", 0, 0)])
         return instructions
 
+
 class Case:
 
     def __init__(self, expression):
-        self.expression = expression.value()
+        self.expression = value(expression)
 
     def generate_code(self):
         return [("label", str(id(self)), 0, 0)]
 
     def set_surrounding_statement(self, statement):
         statement.cases[self.expression] = self
+
 
 class Default:
 
@@ -223,6 +239,7 @@ class Default:
 
     def set_surrounding_statement(self, statement):
         statement.default = self
+
 
 class Label:
 
@@ -234,6 +251,7 @@ class Label:
 
     def set_surrounding_function(self, function):
         function.labels[self.label] =  str(id(self))
+
 
 class Goto:
 
@@ -250,6 +268,7 @@ class Goto:
 
     def set_surrounding_function(self, function):
         self.function = function
+
 
 class While:
 
@@ -274,6 +293,7 @@ class While:
         ])
         return instructions
 
+
 class DoWhile:
 
     def __init__(self, expression, statement):
@@ -294,6 +314,7 @@ class DoWhile:
             ("label", str(id(self))+"end", 0, 0)
         ])
 
+
 def For(initialise, expression, iterate, statement):
     if iterate:
         statement = Block([], [statement, iterate])
@@ -304,6 +325,7 @@ def For(initialise, expression, iterate, statement):
     if initialise:
         loop = Block([], [initialise, loop])
     return loop
+
 
 class Return:
 
@@ -316,6 +338,7 @@ class Return:
         instructions.append(("load", return_value, end, 0))
         instructions.append(("goto register", 0, return_address, 0))
         return instructions
+
 
 class FunctionCall:
 
@@ -346,14 +369,28 @@ class FunctionCall:
         ])
         return instructions
 
-    def value(self):
-        raise CConstantError("Expression is not a constant")
-
     def _type(self):
         return self.declaration._type
 
-    def size(self):
-        return self.declaration.size
+
+class Convert:
+    def __init__(self, expression, _type):
+        self.expression = expression
+        self.__type = _type
+
+    def generate_code(self):
+        instructions = self.expression.generate_code()
+        if self.__type != self.expression._type():
+            instructions.append(("addl", end, end, -1))
+            instructions.append(("load", temp, end, 0))
+            instructions.append(("to_"+self.__type, 0, end, temp))
+            instructions.append(("store", 0, end, temp))
+            instructions.append(("addl", end, end, 1))
+        return instructions
+
+    def _type(self):
+        return self.__type
+
 
 class Binary:
 
@@ -362,32 +399,38 @@ class Binary:
         self.right = constant_fold(right)
         self.function = function
 
-        if self.left._type() != "int":
-            raise CTypeError("only integer operands are supported")
-        if self.right._type() != "int":
-            raise CTypeError("only integer operands are supported")
+        for i in ["float", "int"]:
+            if self.left._type() == i:
+                self.right = Convert(self.right, i)
+                break
+            elif self.right._type() == i:
+                self.left = Convert(self.left, i)
+                break
 
+        if self.left._type() != self.right._type():
+            raise CTypeError("incompatible types:" + left._type() + ", " + right._type())
 
     def generate_code(self):
         operations = {
-            "+" : "add",
-            "-" : "sub",
-            "*" : "mul",
-            "/" : "div",
-            "%" : "mod",
-            "<<" : "lshift",
-            ">>" : "rshift",
-            "&" : "and",
-            "|" : "or",
-            "^" : "xor",
-            "&&" : "blah",
-            "||" : "blahblah",
-            "==" : "eq",
-            "!=" : "ne",
-            "<=" : "le",
-            ">=" : "ge",
-            "<" : "lt",
-            ">" : "gt",
+          "int" : {
+            "+" : "add", "-" : "sub", "*" : "mul", "/" : "div", "%" : "mod",
+            "<<" : "lshift", ">>" : "rshift", "&" : "and", "|" : "or", "^" :
+            "xor", "&&" : "blah", "||" : "blahblah", "==" : "eq", "!=" : "ne",
+            "<=" : "le", ">=" : "ge", "<" : "lt", ">" : "gt",
+          },
+          "float" : {
+            "+" : "fpadd", "-" : "fpsub", "*" : "fpmul", "/" : "fpdiv", "==" :
+            "fpeq", "!=" : "fpne", "<=" : "fple", ">=" : "fpge", "<" : "fplt",
+            ">" : "fpgt",
+          },
+          "int*" : {
+            "+" : "add", "-" : "sub", "==" : "eq", "!=" : "ne", "<=" : "le",
+            ">=" : "ge", "<" : "lt", ">" : "gt",
+          },
+          "float*" : {
+            "+" : "add", "-" : "sub", "==" : "eq", "!=" : "ne", "<=" : "le",
+            ">=" : "ge", "<" : "lt", ">" : "gt",
+          },
         }
         instructions = self.left.generate_code()
         instructions.extend(self.right.generate_code())
@@ -395,39 +438,63 @@ class Binary:
         instructions.append(("load", temp, end, 0))
         instructions.append(("addl", end, end, -1))
         instructions.append(("load", temp1, end, 0))
-        instructions.append((operations[self.function], temp, temp1, temp))
+        instructions.append((operations[self._type()][self.function], temp, temp1, temp))
         instructions.append(("store", 0, end, temp))
         instructions.append(("addl", end, end, 1))
         return instructions
 
     def value(self):
         functions = {
-            "+" : lambda x, y:x+y,
-            "-" : lambda x, y:x-y,
-            "*" : lambda x, y:x*y,
-            "/" : c_style_division,
-            "%" : c_style_modulo,
-            "<<" : lambda x, y:x<<y,
-            ">>" : lambda x, y:x>>y,
-            "&" : lambda x, y:x+y,
-            "|" : lambda x, y:x+y,
-            "^" : lambda x, y:x+y,
-            "&&" : lambda x, y:x and y,
-            "||" : lambda x, y:x or y,
-            "==" : lambda x, y:x+y,
-            "!=" : lambda x, y:x+y,
-            "<=" : lambda x, y:x+y,
-            ">=" : lambda x, y:x+y,
-            "<" : lambda x, y:x+y,
+          "int" : {
+            "+" : lambda x, y:x+y, "-" : lambda x, y:x-y, "*" : lambda x, y:x*y,
+            "/" : c_style_division, "%" : c_style_modulo, "<<" : lambda x, y:x<<y,
+            ">>" : lambda x, y:x>>y, "&" : lambda x, y:x+y, "|" : lambda x, y:x+y,
+            "^" : lambda x, y:x+y, "&&" : lambda x, y:x and y, "||" : lambda x, y:x or y,
+            "==" : lambda x, y:x+y, "!=" : lambda x, y:x+y, "<=" : lambda x, y:x+y,
+            ">=" : lambda x, y:x+y, "<" : lambda x, y:x+y, ">" : lambda x, y:x+y,
+          },
+          "float" : {
+            "+" : lambda x, y:x+y, "-" : lambda x, y:x-y, "*" : lambda x, y:x*y,
+            "/" : lambda x, y:x/y, "==" : lambda x, y:x+y, "!=" : lambda x, y:x+y,
+            "<=" : lambda x, y:x+y, ">=" : lambda x, y:x+y, "<" : lambda x, y:x+y,
             ">" : lambda x, y:x+y,
+          },
+          "int*" : {
+            "+" : lambda x, y:x+y, "-" : lambda x, y:x-y, "==" : lambda x, y:x+y, 
+            "!=" : lambda x, y:x+y, "<=" : lambda x, y:x+y, ">=" : lambda x, y:x+y, 
+            "<" : lambda x, y:x+y, ">" : lambda x, y:x+y,
+          },
+          "float*" : {
+            "+" : lambda x, y:x+y, "-" : lambda x, y:x-y, "==" : lambda x, y:x+y, 
+            "!=" : lambda x, y:x+y, "<=" : lambda x, y:x+y, ">=" : lambda x, y:x+y, 
+            "<" : lambda x, y:x+y, ">" : lambda x, y:x+y,
+          }
         }
-        return functions[self.function](self.left.value(), self.right.value())
+        return functions[self.left._type()][self.function](value(self.left), value(self.right))
 
     def _type(self):
-        return "int"
+        types = {
+          "int" : {
+            "+" : "int", "-" : "int", "*" : "int", "/" : "int", "%" : "int", "<<" :
+            "int", ">>" : "int", "&" : "int", "|" : "int", "^" : "int", "&&" : "int",
+            "||" : "int", "==" : "int", "!=" : "int", "<=" : "int", ">=" : "int", "<" :
+            "int", ">" : "int",
+          },
+          "float" : {
+            "+" : "float", "-" : "float", "*" : "float", "/" : "float", "==" : "int",
+            "!=" : "int", "<=" : "int", ">=" : "int", "<" : "int", ">" : "int",
+          },
+          "int*" : {
+            "+" : "int*", "-" : "int*", "==" : "int", "!=" : "int", "<=" : "int", ">="
+            : "int", "<" : "int", ">" : "int",
+          },
+          "float*" : {
+            "+" : "float*", "-" : "float*", "==" : "int", "!=" : "int", "<=" : "int", 
+            ">=" : "int", "<" : "int", ">" : "int",
+          }
+        }
+        return types[self.left._type()][self.function]
 
-    def size(self):
-        return self.left.size()
 
 class Unary:
 
@@ -457,13 +524,10 @@ class Unary:
             "-" : lambda x:-x,
             "+" : lambda x:+x,
         }
-        return functions[self.function](self.expression.value())
+        return functions[self.function](value(self.expression))
 
     def _type():
         return self.expression._type()
-
-    def size(self):
-        return self.expression.size()
 
 
 class PostIncrement:
@@ -486,14 +550,8 @@ class PostIncrement:
         instructions.append(("addl", end, end, -1))
         return instructions
 
-    def value(self):
-        raise CConstantError("Expression is not a constant")
-
     def _type(self):
         return self.expression._type()
-
-    def size(self):
-        return self.expression.size()
 
 
 class PostDecrement:
@@ -516,14 +574,8 @@ class PostDecrement:
         instructions.append(("addl", end, end, -1))
         return instructions
 
-    def value(self):
-        raise CConstantError("Expression is not a constant")
-
     def _type(self):
         return self.expression._type()
-
-    def size(self):
-        return self.expression.size()
 
 
 class PreIncrement:
@@ -543,14 +595,8 @@ class PreIncrement:
         instructions.extend(self.expression.generate_code_write())
         return instructions
 
-    def value(self):
-        raise CConstantError("Expression is not a constant")
-
     def _type(self):
         return self.expression._type()
-
-    def size(self):
-        return self.expression.size()
 
 
 class PreDecrement:
@@ -570,14 +616,8 @@ class PreDecrement:
         instructions.extend(self.expression.generate_code_write())
         return instructions
 
-    def value(self):
-        raise CConstantError("Expression is not a constant")
-
     def _type(self):
         return self.expression._type()
-
-    def size(self):
-        return self.expression.size()
 
 
 class Block:
@@ -634,12 +674,31 @@ class Discard:
         return instructions
 
 
+class CompoundExpression:
+
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def generate_code(self):
+        instructions = self.right.generate_code()
+        instructions.append(("addl", end, end, -1))
+        instructions = self.left.generate_code()
+        return instructions
+
+    def _type(self):
+        return self.left._type()
+
+
 class Assignment:
 
     def __init__(self, left, right):
         self.left = left
         self.right = constant_fold(right)
-        print left, right
+
+        if self.left._type() in ["int", "float"]:
+            self.right = Convert(self.right, self.left._type())
+
         if self.left._type() != self.right._type():
             raise CTypeError("Cannot assign " + self.right._type() + 
             " to " + self.left._type())
@@ -649,27 +708,20 @@ class Assignment:
         instructions.extend(self.left.generate_code_write())
         return instructions
 
-    def value(self):
-        raise CConstantError("Expression is not a constant")
-
     def _type(self):
         return self.left._type()
-
-    def size(self):
-        return self.left.size()
 
 
 class SizeOf:
 
     def __init__(self, expression):
-        self.size = expression.size()
-        self.expression = Constant(self.size)
+        self.expression = Constant(size(self))
 
     def generate_code(self):
         return self.expression.generate_code()
 
     def value(self):
-        return self.size
+        return size(self)
 
     def _type(self):
         return "int"
@@ -685,16 +737,10 @@ class Address:
         self.expression = expression
 
     def generate_code(self):
-        return self.expression.gererate_code_address()
-
-    def value(self):
-        raise CConstantError("Expression is not a constant")
+        return self.expression.generate_code_address()
 
     def _type(self):
         return self.expression._type() + "*"
-
-    def size(self):
-        return sizes[self._type()]
 
 
 class Dereference:
@@ -718,7 +764,7 @@ class Dereference:
 
     def generate_code_write(self):
         instructions = self.expression.generate_code()
-        return [
+        instructions.extend([
             #pop
             ("addl", end, end, -1),
             ("load", offset, end, 0),
@@ -729,7 +775,8 @@ class Dereference:
             ("addl", end, end, 1),
             #store
             ("store", 0, offset, temp)
-        ]
+        ])
+        return instructions
 
     def generate_code_address(self):
         return [
@@ -739,13 +786,7 @@ class Dereference:
             ("addl", end, end, 1),
         ]
 
-    def value(self):
-        raise CConstantError("Dereferenced pointer is not a constant")
-
     def _type(self):
         if not self.expression._type().endswith("*"):
             raise CTypeError("Expression is not a pointer")
         return self.expression._type()[:-1]
-
-    def size(self):
-        return sizes[self._type()]

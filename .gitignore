@@ -2,3 +2,6 @@
 test.c
 test
 a.out
+htmlcov
+1q
+.coverage

@@ -1,6 +1,16 @@
+int func(int a)
+{
+	return a + 10;
+}
+
 int main()
 {
-	int a, b;
+	int a = 10, b = 0;
 
-	return sizeof (int);
+	while(a){
+	  b += 1;
+	  a -= 1;
+	}
+
+	return b;
 }

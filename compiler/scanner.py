@@ -1,7 +1,7 @@
-operators = [",", ".", "=", "<<", ">>", "==","!=", "<", ">", ">=", "<=", "(", 
-")", "{", "}", "+", "-", "*", "%", "/", "//", "~", "!", "&", "|", "^", ";", 
-"&&", "||", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "<<=", ">>=",
-"[", "]", ":"]
+operators = [",", ".", "=", "<<", ">>", "==","!=", "<", ">", ">=", "<=", "(",
+")", "{", "}", "+", "-", "*", "%", "/", "//", "~", "!", "&", "|", "^", ";",
+"&&", "||", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=",
+">>=", "[", "]", ":"]
 
 class Tokenize:
     """
@@ -57,7 +57,8 @@ class Tokenize:
 
                 #number
                 elif token[0].isdigit():
-                    if char.isdigit() or char in [".", "x", "X"]:
+                    if char.isdigit() or char in [
+                            "e", "E", "x", "X", ".", "a", "A", "b", "B", "c", "C", "d", "D", "f", "F"]:
                         token += char
                     else:
                         tokens.append((token, lineno, charno))
@@ -84,8 +85,8 @@ class Tokenize:
             lineno += 1
             charno = 1
 
-        for token, line, char in tokens:
-            print token, "line", line, ",", char
+        #for token, line, char in tokens:
+            #print token, "line", line, ",", char
 
         self.tokens = tokens
         self.lineno = 1
