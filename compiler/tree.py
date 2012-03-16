@@ -166,17 +166,28 @@ class If:
         self.false = false
 
     def generate_code(self):
-        instructions = self.expression.generate_code()
-        instructions.extend([
-            ("addl", end, end, -1),
-            ("load", temp, end, 0),
-            ("jump if false", 0, temp, str(id(self)))
-        ])
-        instructions.extend(self.true.generate_code())
-        instructions.append(("label", str(id(self)), 0, 0))
-        if self.false:
-            instructions.extend(self.false.generate_code())
-        return instructions
+        try:
+            if value(self.expression == 0):
+                if self.false:
+                    return self.false.generate_code()
+                else:
+                    return []
+            else:
+                return self.true.generate_code()
+        except CConstantError:
+            instructions = self.expression.generate_code()
+            instructions.extend([
+                ("addl", end, end, -1),
+                ("load", temp, end, 0),
+                ("jump if false", 0, temp, str(id(self)))
+            ])
+            instructions.extend(self.true.generate_code())
+            instructions.append(("goto", 0, 0, str(id(self))+"end"))
+            instructions.append(("label", str(id(self)), 0, 0))
+            if self.false:
+                instructions.extend(self.false.generate_code())
+            instructions.append(("label", str(id(self))+"end", 0, 0))
+            return instructions
 
     def set_surrounding_statement(self, s):
         if hasattr(self.true, "set_surrounding_statement"):
@@ -279,18 +290,28 @@ class While:
             statement.set_surrounding_statement(self)
 
     def generate_code(self):
-        instructions = [("label", str(id(self))+"start", 0, 0)]
-        instructions.extend(self.expression.generate_code())
-        instructions.extend([
-            ("addl", end, end, -1),
-            ("load", temp, end, 0),
-            ("jump if false", 0, temp, str(id(self)) + "end")
-        ])
-        instructions.extend(self.statement.generate_code())
-        instructions.extend([
-            ("goto", 0, 0, str(id(self)) + "start"),
-            ("label", str(id(self)) + "end", 0, 0)
-        ])
+        try:
+            if value(self.expression):
+                instructions = [("label", str(id(self))+"start", 0, 0)]
+                instructions.extend(self.statement.generate_code())
+                instructions.append(("goto", 0, 0, str(id(self)) + "start"))
+                instructions.append(("label", str(id(self))+"end", 0, 0))
+            else:
+                instructions = [("label", str(id(self))+"start", 0, 0)]
+                instructions.append(("label", str(id(self))+"end", 0, 0))
+        except CConstantError:
+            instructions = [("label", str(id(self))+"start", 0, 0)]
+            instructions.extend(self.expression.generate_code())
+            instructions.extend([
+                ("addl", end, end, -1),
+                ("load", temp, end, 0),
+                ("jump if false", 0, temp, str(id(self)) + "end")
+            ])
+            instructions.extend(self.statement.generate_code())
+            instructions.extend([
+                ("goto", 0, 0, str(id(self)) + "start"),
+                ("label", str(id(self)) + "end", 0, 0)
+            ])
         return instructions
 
 
@@ -303,17 +324,27 @@ class DoWhile:
             statement.set_surrounding_statement(self)
 
     def generate_code(self):
-        instructions = [("label", str(id(self))+"start", 0, 0)]
-        instructions.extend(self.statement.generate_code())
-        instructions.extend(self.expression.generate_code())
-        instructions.extend([
-            ("addl", end, end, -1),
-            ("load", temp, end, 0),
-            ("jump if false", 0, temp, str(id(self)) + "end")
-            ("goto", 0, 0, str(id(self)) + "start"),
-            ("label", str(id(self))+"end", 0, 0)
-        ])
-
+        try:
+            if value(expression.generate_code()):
+                instructions = [("label", str(id(self))+"start", 0, 0)]
+                instructions.extend(self.statement.generate_code())
+                instructions.append(("goto", 0, 0, str(id(self)) + "start"))
+                instructions.append(("label", str(id(self))+"end", 0, 0))
+            else:
+                instructions = [("label", str(id(self))+"start", 0, 0)]
+                instructions.extend(self.statement.generate_code())
+                instructions.append(("label", str(id(self))+"end", 0, 0))
+        except CConstantError:
+            instructions = [("label", str(id(self))+"start", 0, 0)]
+            instructions.extend(self.statement.generate_code())
+            instructions.extend(self.expression.generate_code())
+            instructions.extend([
+                ("addl", end, end, -1),
+                ("load", temp, end, 0),
+                ("jump if false", 0, temp, str(id(self)) + "end")
+                ("goto", 0, 0, str(id(self)) + "start"),
+                ("label", str(id(self))+"end", 0, 0)
+            ])
 
 def For(initialise, expression, iterate, statement):
     if iterate:
@@ -392,6 +423,62 @@ class Convert:
         return self.__type
 
 
+def Or(left, right):
+    return Ternary(
+            left, 
+            Constant(1), 
+            Ternary(
+                right, 
+                Constant(1), 
+                Constant(0)
+            )
+    )
+
+
+def And(left, right):
+    return Ternary(
+            left, 
+            Ternary(
+                right, 
+                Constant(1), 
+                Constant(0)
+            ), 
+            Constant(0)
+    )
+
+
+class Ternary:
+
+    def __init__(self, expression, true_expression, false_expression):
+        self.expression = constant_fold(expression)
+        self.true_expression = constant_fold(true_expression)
+        self.false_expression = constant_fold(false_expression)
+
+    def generate_code(self):
+        try:
+            if value(self.expression):
+                return self.true_expression.generate_code()
+            else:
+                return self.false_expression.generate_code()
+        except CConstantError:
+            instructions = self.expression.generate_code()
+            instructions.append(("addl", end, end, -1))
+            instructions.append(("load", temp, end, 0))
+            instructions.append(("jump if false", 0, temp, str(id(self))+"false"))
+            instructions.extend(self.true_expression.generate_code())
+            instructions.append(("goto", 0, 0, str(id(self))+"end"))
+            instructions.append(("label", str(id(self))+"false", 0, 0))
+            instructions.extend(self.false_expression.generate_code())
+            instructions.append(("label", str(id(self))+"end", 0, 0))
+            return instructions
+
+    def value(self):
+        if value(self.expression):
+            return value(self.true_expression)
+        else:
+            return value(self.false_expression)
+
+
 class Binary:
 
     def __init__(self, left, right, function):
@@ -413,23 +500,54 @@ class Binary:
     def generate_code(self):
         operations = {
           "int" : {
-            "+" : "add", "-" : "sub", "*" : "mul", "/" : "div", "%" : "mod",
-            "<<" : "lshift", ">>" : "rshift", "&" : "and", "|" : "or", "^" :
-            "xor", "&&" : "blah", "||" : "blahblah", "==" : "eq", "!=" : "ne",
-            "<=" : "le", ">=" : "ge", "<" : "lt", ">" : "gt",
+            "+" : "add", 
+            "-" : "sub", 
+            "*" : "mul", 
+            "/" : "div", 
+            "%" : "mod",
+            "<<" : "lshift", 
+            ">>" : "rshift", 
+            "&" : "and", 
+            "|" : "or", 
+            "^" : "xor",  
+            "==" : "eq", 
+            "!=" : "ne", 
+            "<=" : "le", 
+            ">=" : "ge", 
+            "<" : "lt", 
+            ">" : "gt",
           },
           "float" : {
-            "+" : "fpadd", "-" : "fpsub", "*" : "fpmul", "/" : "fpdiv", "==" :
-            "fpeq", "!=" : "fpne", "<=" : "fple", ">=" : "fpge", "<" : "fplt",
+            "+" : "fpadd", 
+            "-" : "fpsub", 
+            "*" : "fpmul", 
+            "/" : "fpdiv", 
+            "==" : "fpeq", 
+            "!=" : "fpne", 
+            "<=" : "fple", 
+            ">=" : "fpge", 
+            "<" : "fplt",
             ">" : "fpgt",
           },
           "int*" : {
-            "+" : "add", "-" : "sub", "==" : "eq", "!=" : "ne", "<=" : "le",
-            ">=" : "ge", "<" : "lt", ">" : "gt",
+            "+" : "add", 
+            "-" : "sub", 
+            "==" : "eq", 
+            "!=" : "ne", 
+            "<=" : "le",
+            ">=" : "ge", 
+            "<" : "lt",
+            ">" : "gt",
           },
           "float*" : {
-            "+" : "add", "-" : "sub", "==" : "eq", "!=" : "ne", "<=" : "le",
-            ">=" : "ge", "<" : "lt", ">" : "gt",
+            "+" : "add", 
+            "-" : "sub", 
+            "==" : "eq", 
+            "!=" : "ne", 
+            "<=" : "le",
+            ">=" : "ge", 
+            "<" : "lt", 
+            ">" : "gt",
           },
         }
         instructions = self.left.generate_code()
@@ -446,28 +564,54 @@ class Binary:
     def value(self):
         functions = {
           "int" : {
-            "+" : lambda x, y:x+y, "-" : lambda x, y:x-y, "*" : lambda x, y:x*y,
-            "/" : c_style_division, "%" : c_style_modulo, "<<" : lambda x, y:x<<y,
-            ">>" : lambda x, y:x>>y, "&" : lambda x, y:x+y, "|" : lambda x, y:x+y,
-            "^" : lambda x, y:x+y, "&&" : lambda x, y:x and y, "||" : lambda x, y:x or y,
-            "==" : lambda x, y:x+y, "!=" : lambda x, y:x+y, "<=" : lambda x, y:x+y,
-            ">=" : lambda x, y:x+y, "<" : lambda x, y:x+y, ">" : lambda x, y:x+y,
+            "+"  : lambda x, y:x+y, 
+            "-"  : lambda x, y:x-y, 
+            "*"  : lambda x, y:x*y,
+            "/"  : c_style_division, 
+            "%"  : c_style_modulo, 
+            "<<" : lambda x, y:x<<y,
+            ">>" : lambda x, y:x>>y, 
+            "&"  : lambda x, y:x&y, 
+            "|"  : lambda x, y:x|y,
+            "^"  : lambda x, y:x^y, 
+            "==" : lambda x, y:x==y, 
+            "!=" : lambda x, y:x!=y, 
+            "<=" : lambda x, y:x<=y,
+            ">=" : lambda x, y:x>=y, 
+            "<"  : lambda x, y:x<y, 
+            ">"  : lambda x, y:x>y,
           },
           "float" : {
-            "+" : lambda x, y:x+y, "-" : lambda x, y:x-y, "*" : lambda x, y:x*y,
-            "/" : lambda x, y:x/y, "==" : lambda x, y:x+y, "!=" : lambda x, y:x+y,
-            "<=" : lambda x, y:x+y, ">=" : lambda x, y:x+y, "<" : lambda x, y:x+y,
-            ">" : lambda x, y:x+y,
+            "+"  : lambda x, y:x+y, 
+            "-"  : lambda x, y:x-y, 
+            "*"  : lambda x, y:x*y,
+            "/"  : lambda x, y:x/y, 
+            "==" : lambda x, y:x==y, 
+            "!=" : lambda x, y:x!=y,
+            "<=" : lambda x, y:x<=y, 
+            ">=" : lambda x, y:x>=y, 
+            "<"  : lambda x, y:x<y,
+            ">"  : lambda x, y:x>y,
           },
           "int*" : {
-            "+" : lambda x, y:x+y, "-" : lambda x, y:x-y, "==" : lambda x, y:x+y, 
-            "!=" : lambda x, y:x+y, "<=" : lambda x, y:x+y, ">=" : lambda x, y:x+y, 
-            "<" : lambda x, y:x+y, ">" : lambda x, y:x+y,
+            "+"  : lambda x, y:x+y, 
+            "-"  : lambda x, y:x-y, 
+            "==" : lambda x, y:x==y, 
+            "!=" : lambda x, y:x!=y, 
+            "<=" : lambda x, y:x<=y, 
+            ">=" : lambda x, y:x>=y, 
+            "<"  : lambda x, y:x<y, 
+            ">"  : lambda x, y:x>y,
           },
           "float*" : {
-            "+" : lambda x, y:x+y, "-" : lambda x, y:x-y, "==" : lambda x, y:x+y, 
-            "!=" : lambda x, y:x+y, "<=" : lambda x, y:x+y, ">=" : lambda x, y:x+y, 
-            "<" : lambda x, y:x+y, ">" : lambda x, y:x+y,
+            "+"  : lambda x, y:x+y, 
+            "-"  : lambda x, y:x-y, 
+            "==" : lambda x, y:x==y, 
+            "!=" : lambda x, y:x!=y, 
+            "<=" : lambda x, y:x<=y, 
+            ">=" : lambda x, y:x>=y, 
+            "<"  : lambda x, y:x<y, 
+            ">"  : lambda x, y:x>y,
           }
         }
         return functions[self.left._type()][self.function](value(self.left), value(self.right))
@@ -475,22 +619,56 @@ class Binary:
     def _type(self):
         types = {
           "int" : {
-            "+" : "int", "-" : "int", "*" : "int", "/" : "int", "%" : "int", "<<" :
-            "int", ">>" : "int", "&" : "int", "|" : "int", "^" : "int", "&&" : "int",
-            "||" : "int", "==" : "int", "!=" : "int", "<=" : "int", ">=" : "int", "<" :
-            "int", ">" : "int",
+            "+"  : "int", 
+            "-"  : "int", 
+            "*"  : "int", 
+            "/"  : "int", 
+            "%"  : "int", 
+            "<<" : "int", 
+            ">>" : "int", 
+            "&"  : "int", 
+            "|"  : "int", 
+            "^"  : "int", 
+            "&&" : "int",
+            "||" : "int", 
+            "==" : "int", 
+            "!=" : "int", 
+            "<=" : "int", 
+            ">=" : "int", 
+            "<"  : "int", 
+            ">"  : "int",
           },
           "float" : {
-            "+" : "float", "-" : "float", "*" : "float", "/" : "float", "==" : "int",
-            "!=" : "int", "<=" : "int", ">=" : "int", "<" : "int", ">" : "int",
+            "+"  : "float", 
+            "-"  : "float", 
+            "*"  : "float", 
+            "/"  : "float", 
+            "==" : "int",
+            "!=" : "int",
+            "<=" : "int", 
+            ">=" : "int", 
+            "<"  : "int", 
+            ">"  : "int",
           },
           "int*" : {
-            "+" : "int*", "-" : "int*", "==" : "int", "!=" : "int", "<=" : "int", ">="
-            : "int", "<" : "int", ">" : "int",
+            "+"  : "int*", 
+            "-"  : "int*", 
+            "==" : "int", 
+            "!=" : "int", 
+            "<=" : "int", 
+            ">=" : "int", 
+            "<"  : "int", 
+            ">"  : "int",
           },
           "float*" : {
-            "+" : "float*", "-" : "float*", "==" : "int", "!=" : "int", "<=" : "int", 
-            ">=" : "int", "<" : "int", ">" : "int",
+            "+"  : "float*", 
+            "-"  : "float*", 
+            "==" : "int", 
+            "!=" : "int", 
+            "<=" : "int", 
+            ">=" : "int", 
+            "<"  : "int", 
+            ">"  : "int",
           }
         }
         return types[self.left._type()][self.function]
@@ -519,7 +697,7 @@ class Unary:
 
     def value(self):
         functions = {
-            "!" : lambda x:-1 if x == 0 else 0,
+            "!" : lambda x:1 if x == 0 else 0,
             "~" : lambda x:~x,
             "-" : lambda x:-x,
             "+" : lambda x:+x,

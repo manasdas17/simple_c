@@ -339,14 +339,24 @@ class Parser:
 
     def parse_constant_expression(self):
 
-        """Parse a constant expression used in variable initialisation."""
+        """
+
+        constant_expression ::=
+            ternary_expression
+        
+        """
 
         unary = self.parse_unary_expression()
-        return self.parse_or_expression(unary)
+        return self.parse_ternary_expression(unary)
 
     def parse_expression(self):
 
-        """Parse an expression."""
+        """
+
+        expression ::=
+            assignment_expression ( "," assignment_expression )*
+
+        """
         
         expression = self.parse_assignment_expression()
         while self.tokens.check(","):
@@ -356,7 +366,17 @@ class Parser:
 
     def parse_assignment_expression(self):
 
-        """Parse an assignment expression."""
+        """
+
+        assignment_operator ::=
+            ("=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | 
+            "|=" | "^=")
+
+        assignment_expression ::=
+            ternary_expression | 
+            (unary_expression assignment_operator assignment_expression)
+
+        """
 
         left = self.parse_unary_expression()
         for token in ["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", "&=", 
@@ -370,35 +390,69 @@ class Parser:
                     return Assignment(
                         left, Binary(left, right, token[:-1]))
 
-        return self.parse_or_expression(left)
+        return self.parse_ternary_expression(left)
+
+    def parse_ternary_expression(self, unary):
+
+        """
+
+        ternary_expression ::= 
+            or_expression ( "?" expression ":" ternary_expression )?
+
+        """
+
+        expression = self.parse_or_expression(unary)
+        if self.tokens.check("?"):
+            self.tokens.expect("?")
+            true_expression = self.parse_expression()
+            self.tokens.expect(":")
+            unary = self.parse_unary_expression()
+            false_expression = self.parse_ternary_expression(unary)
+            expression = Ternary(expression, true_expression, false_expression)
+        return expression
 
     def parse_or_expression(self, unary):
 
-        """Parse a logical or expression."""
+        """
+       
+        or_expression ::=
+            and_expression ( "||"  and_expression )*
+        
+        """
 
         expression = self.parse_and_expression(unary)
         while self.tokens.peek() in ["||"]:
             function = self.tokens.pop()
             unary = self.parse_unary_expression()
-            expression = Binary(
-                expression, self.parse_and_expression(unary), function)
+            expression = Or(
+                expression, self.parse_and_expression(unary))
         return expression
 
     def parse_and_expression(self, unary):
 
-        """Parse a logical and expression."""
+        """
+        
+        and_expression ::=
+            bitwise_or_expression ( "&&" bitwise_or_expression )*
+        
+        """
 
         expression = self.parse_bitwise_or_expression(unary)
         while self.tokens.peek() in ["&&"]:
             function = self.tokens.pop()
             unary = self.parse_unary_expression()
-            expression = Binary(
-                expression, self.parse_bitwise_or_expression(unary), function)
+            expression = And(
+                expression, self.parse_bitwise_or_expression(unary))
         return expression
 
     def parse_bitwise_or_expression(self, unary):
 
-        """Parse a bitwise or expression."""
+        """
+        
+        bitwise_or_expression ::=
+            bitwise_xor_expression ( "|" bitwise_xor_expression )*
+        
+        """
 
         expression = self.parse_bitwise_xor_expression(unary)
         while self.tokens.peek() in ["|"]:
@@ -410,7 +464,12 @@ class Parser:
 
     def parse_bitwise_xor_expression(self, unary):
 
-        """Parse a bitwise xor expression."""
+        """
+        
+        bitwise_xor_expression ::=
+            bitwise_and_expression ( "^" bitwise_and_expression )*
+        
+        """
 
         expression = self.parse_bitwise_and_expression(unary)
         while self.tokens.peek() in ["^"]:
@@ -422,7 +481,12 @@ class Parser:
 
     def parse_bitwise_and_expression(self, unary):
 
-        """Parse a bitwise and expression."""
+        """
+        
+        bitwise_and_expression ::=
+            bitwise_comparison_expression ( "&" bitwise_comparison_expression )*
+        
+        """
 
         expression = self.parse_comparison_expression(unary)
         while self.tokens.peek() in ["&"]:
@@ -434,7 +498,12 @@ class Parser:
 
     def parse_comparison_expression(self, unary):
 
-        """Parse a comparison expression."""
+        """
+        
+        comparison_expression ::=
+            equality_expression ( ("<" | "<=" | ">" | ">=") equality_expression )*
+        
+        """
 
         expression = self.parse_equality_expression(unary)
         while self.tokens.peek() in ["<", "<=", ">", ">="]:
@@ -446,7 +515,12 @@ class Parser:
 
     def parse_equality_expression(self, unary):
 
-        """Parse an equality (or inequality) expression."""
+        """
+        
+        equality_expression ::=
+            shift_expression ( ("==" | "!=") shift_expression )*
+        
+        """
 
         expression = self.parse_shift_expression(unary)
         while self.tokens.peek() in ["==", "!="]:
@@ -458,7 +532,12 @@ class Parser:
 
     def parse_shift_expression(self, unary):
 
-        """Parse a left or right shift expression."""
+        """
+        
+        shift_expression ::=
+            arithmetic_expression ( ("<<" | ">>") arithmetic_expression )*
+        
+        """
 
         expression = self.parse_arithmetic_expression(unary)
         while self.tokens.peek() in ["<<", ">>"]:
@@ -470,7 +549,12 @@ class Parser:
 
     def parse_arithmetic_expression(self, unary):
 
-        """Parse an arithmetic expression."""
+        """
+        
+        arithmetic_expression ::=
+            multiplicative_expression ( ("+" | "-") multiplicative_expression )*
+        
+        """
 
         expression = self.parse_mult_expression(unary)
         while self.tokens.peek() in ["+", "-"]:
@@ -482,7 +566,12 @@ class Parser:
 
     def parse_mult_expression(self, unary):
 
-        """Parse a multiply, divide or modulo expression."""
+        """
+        
+        multiplicative_expression ::=
+            unary_expression ( ("*" | "/" | "%") unary_expression )*
+        
+        """
 
         expression = unary
         while self.tokens.peek() in ["*", "/", "%"]:
