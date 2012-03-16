@@ -4,6 +4,7 @@ import sys
 
 import compiler.parser as parser
 import compiler.optimizer as optimizer
+import compiler.registers as registers
 import simulator.simulator as simulator
 import assembler.assembler as assembler
 
@@ -17,11 +18,11 @@ def test(name, expected_return_value, code):
         while thesimulator.program_counter != 3:
             thesimulator.execute()
 
-        if thesimulator.registers[14] == expected_return_value:
+        if thesimulator.registers[registers.return_value] == expected_return_value:
             print name, "...pass"
         else:
             print name, "...fail"
-            print "expected:", expected_return_value, "actual:", thesimulator.registers[14]
+            print "expected:", expected_return_value, "actual:", thesimulator.registers[registers.return_value]
             print "ALL TESTS FAIL"
             exit(0)
 

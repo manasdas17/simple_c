@@ -35,13 +35,15 @@ then popped from the stack, therby resoring the state prior to the function
 call. The return_value register is then be placed on top of the stack.
 
 """
+# registers 0-23 are general purpose
+maxgpr = 23
 
-#register definitions
-start = 0
-end = 1
-offset = 2
-new = 3
-temp = 4
-temp1 = 5
-return_value = 14
-return_address = 15
+#registers 24-31 are defined as follows
+start = 24
+end = 25
+offset = 26
+new = 27
+temp = 28
+temp1 = 29
+return_value = 30
+return_address = 31

@@ -3,6 +3,52 @@ from exceptions import CConstantError, CTypeError, CSyntaxError
 from common import c_style_division, c_style_modulo
 from registers import *
 
+class GPRException(Exception):
+    pass
+
+gpr = 0
+
+def get_gpr():
+    global gpr
+    return gpr
+
+def increment_gpr():
+    global gpr
+    if gpr < maxgpr:
+        gpr += 1;
+    else:
+        raise GPRException
+
+def decrement_gpr():
+    global gpr
+    if gpr > 0:
+        gpr -= 1;
+    else:
+        raise GPRException
+
+def generate_code(leaf):
+    global gpr
+    stored_gpr = gpr
+    #attempt to generate code in registers
+    if hasattr(leaf, "generate_code_reg"):
+        try:
+            #generate in registers
+            instructions = leaf.generate_code_reg()
+            decrement_gpr()
+            #then move to the stack
+            instructions.append(("store", 0, end, gpr))
+            instructions.append(("addl", end, end, 1))
+            return instructions
+        except GPRException:
+            gpr = stored_gpr
+    #if this fails for some reason use the stack
+    return leaf.generate_code()
+
+def generate_code_reg(leaf):
+    if hasattr(leaf, "generate_code_reg"):
+        return leaf.generate_code_reg()
+    else:
+        raise GPRException
 
 sizes = {"int" : 4, "float" : 4, "int*": 4, "float*":4}
 def size(expression):
@@ -23,7 +69,6 @@ def constant_fold(potential_constant):
         return Constant(value(potential_constant))
     except CConstantError:
         return potential_constant
-
 
 class CompilationUnit:
 
@@ -57,6 +102,11 @@ class Constant:
             ("addl", end, end, 1),
         ]
 
+    def generate_code_reg(self):
+        instructions = [("literal", get_gpr(), 0, self.constant)]
+        increment_gpr()
+        return instructions
+
     def value(self):
         return self.constant
 
@@ -82,6 +132,14 @@ class Variable:
             ("store", 0, end, temp),
             ("addl", end, end, 1),
         ]
+
+    def generate_code_reg(self):
+        instructions = [
+            ("addl", offset, start, self.declarator.offset),
+            ("load", get_gpr(), offset, 0),
+        ]
+        increment_gpr()
+        return instructions
 
     def generate_code_write(self):
         return [
@@ -127,16 +185,22 @@ class Declarator:
         self._type = _type
 
     def generate_code(self):
-        instructions = [("addl", end, end, sizes[self._type])]
+        global gpr
+        instructions = [("addl", end, end, sizes[self._type]//4)]
         if self.expression:
-            #initialise expression
-            instructions.extend(self.expression.generate_code())
-            #pop
-            instructions.append(("addl", end, end, -1))
-            instructions.append(("load", temp, end, 0))
-            #put in variable
-            instructions.append(("addl", offset, start, self.offset))
-            instructions.append(("store", 0, offset, temp))
+            stored_gpr = gpr
+            try:
+                instructions.extend(generate_code_reg(self.expression))
+                decrement_gpr()
+                instructions.append(("addl", offset, start, self.offset))
+                instructions.append(("store", 0, offset, gpr))
+            except GPRException:
+                gpr = stored_gpr
+                instructions.extend(generate_code(self.expression))
+                instructions.append(("addl", end, end, -1))
+                instructions.append(("load", temp, end, 0))
+                instructions.append(("addl", offset, start, self.offset))
+                instructions.append(("store", 0, offset, temp))
         return instructions
 
 
@@ -169,13 +233,13 @@ class If:
         try:
             if value(self.expression == 0):
                 if self.false:
-                    return self.false.generate_code()
+                    return generate_code(self.false)
                 else:
                     return []
             else:
-                return self.true.generate_code()
+                return generate_code(self.true)
         except CConstantError:
-            instructions = self.expression.generate_code()
+            instructions = generate_code(self.expression)
             instructions.extend([
                 ("addl", end, end, -1),
                 ("load", temp, end, 0),
@@ -212,7 +276,7 @@ class Switch:
             statement.set_surrounding_statement(self)
 
     def generate_code(self):
-        instructions = self.expression.generate_code()
+        instructions = generate_code(self.expression)
         instructions.extend([
             ("addl", end, end, -1),
             ("load", temp, end, 0),
@@ -301,7 +365,7 @@ class While:
                 instructions.append(("label", str(id(self))+"end", 0, 0))
         except CConstantError:
             instructions = [("label", str(id(self))+"start", 0, 0)]
-            instructions.extend(self.expression.generate_code())
+            instructions.extend(generate_code(self.expression))
             instructions.extend([
                 ("addl", end, end, -1),
                 ("load", temp, end, 0),
@@ -337,7 +401,7 @@ class DoWhile:
         except CConstantError:
             instructions = [("label", str(id(self))+"start", 0, 0)]
             instructions.extend(self.statement.generate_code())
-            instructions.extend(self.expression.generate_code())
+            instructions.extend(generate_code(self.expression))
             instructions.extend([
                 ("addl", end, end, -1),
                 ("load", temp, end, 0),
@@ -364,7 +428,7 @@ class Return:
         self.expression = constant_fold(expression)
 
     def generate_code(self):
-        instructions = self.expression.generate_code()
+        instructions = generate_code(self.expression)
         instructions.append(("addl", end, end, -1))
         instructions.append(("load", return_value, end, 0))
         instructions.append(("goto register", 0, return_address, 0))
@@ -386,7 +450,7 @@ class FunctionCall:
           ("addl", new, end, 0),
         ]
         for arg in self.args:
-            instructions.extend(arg.generate_code())
+            instructions.extend(generate_code(arg))
         instructions.extend([
           ("addl", start, new, 0),
           ("jump and link", return_address, 0, str(id(self.declaration))),
@@ -410,13 +474,19 @@ class Convert:
         self.__type = _type
 
     def generate_code(self):
-        instructions = self.expression.generate_code()
+        instructions = generate_code(self.expression)
         if self.__type != self.expression._type():
             instructions.append(("addl", end, end, -1))
             instructions.append(("load", temp, end, 0))
             instructions.append(("to_"+self.__type, 0, end, temp))
             instructions.append(("store", 0, end, temp))
             instructions.append(("addl", end, end, 1))
+        return instructions
+
+    def generate_code_reg(self):
+        instructions = generate_code_reg(self.expression)
+        if self.__type != self.expression._type():
+            instructions.append(("to_"+self.__type, 0, gpr, gpr))
         return instructions
 
     def _type(self):
@@ -457,11 +527,11 @@ class Ternary:
     def generate_code(self):
         try:
             if value(self.expression):
-                return self.true_expression.generate_code()
+                return generate_code(self.true_expression)
             else:
-                return self.false_expression.generate_code()
+                return generate_code(self.false_expression)
         except CConstantError:
-            instructions = self.expression.generate_code()
+            instructions = generate_code(self.expression)
             instructions.append(("addl", end, end, -1))
             instructions.append(("load", temp, end, 0))
             instructions.append(("jump if false", 0, temp, str(id(self))+"false"))
@@ -485,20 +555,7 @@ class Binary:
         self.left = constant_fold(left)
         self.right = constant_fold(right)
         self.function = function
-
-        for i in ["float", "int"]:
-            if self.left._type() == i:
-                self.right = Convert(self.right, i)
-                break
-            elif self.right._type() == i:
-                self.left = Convert(self.left, i)
-                break
-
-        if self.left._type() != self.right._type():
-            raise CTypeError("incompatible types:" + left._type() + ", " + right._type())
-
-    def generate_code(self):
-        operations = {
+        self.operations = {
           "int" : {
             "+" : "add", 
             "-" : "sub", 
@@ -550,13 +607,35 @@ class Binary:
             ">" : "gt",
           },
         }
+
+        for i in ["float", "int"]:
+            if self.left._type() == i:
+                self.right = Convert(self.right, i)
+                break
+            elif self.right._type() == i:
+                self.left = Convert(self.left, i)
+                break
+
+        if self.left._type() != self.right._type():
+            raise CTypeError("incompatible types:" + left._type() + ", " + right._type())
+
+    def generate_code_reg(self):
+        operation = self.operations[self._type()][self.function]
+        instructions = generate_code_reg(self.left)
+        instructions.extend(generate_code_reg(self.right))
+        decrement_gpr()
+        instructions.append((operation, gpr-1, gpr-1, gpr))
+        return instructions
+
+    def generate_code(self):
+        operation = self.operations[self._type()][self.function]
         instructions = self.left.generate_code()
         instructions.extend(self.right.generate_code())
         instructions.append(("addl", end, end, -1))
         instructions.append(("load", temp, end, 0))
         instructions.append(("addl", end, end, -1))
         instructions.append(("load", temp1, end, 0))
-        instructions.append((operations[self._type()][self.function], temp, temp1, temp))
+        instructions.append((operation, temp, temp1, temp))
         instructions.append(("store", 0, end, temp))
         instructions.append(("addl", end, end, 1))
         return instructions
@@ -684,7 +763,7 @@ class Unary:
 
     def generate_code(self):
         operations = { "!" : "not", "~" : "invert", "-" : "negate"}
-        instructions = self.expression.generate_code()
+        instructions = generate_code(self.expression)
         if self.function != "+":
             instructions.extend([
                 ("addl", end, end, -1),
@@ -714,7 +793,7 @@ class PostIncrement:
         self.expression = expression
 
     def generate_code(self):
-        instructions = self.expression.generate_code()
+        instructions = generate_code(self.expression)
         instructions.extend([
             ("addl", end, end, -1),
             ("load", temp, end, 0),
@@ -724,7 +803,7 @@ class PostIncrement:
             ("store", 0, end, temp),
             ("addl", end, end, 1),
         ])
-        instructions.extend(self.expression.generate_code_write())
+        instructions.extend(generate_code(self.expression))
         instructions.append(("addl", end, end, -1))
         return instructions
 
@@ -882,7 +961,7 @@ class Assignment:
             " to " + self.left._type())
 
     def generate_code(self):
-        instructions = self.right.generate_code()
+        instructions = generate_code(self.right)
         instructions.extend(self.left.generate_code_write())
         return instructions
 
