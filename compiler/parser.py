@@ -10,43 +10,17 @@ types = ["int", "float"]
 class Parser:
 
     """
-    Parser
+
+    parser
+    ======
 
     The parser consumes tokens from the lexical scanner, and uses them to 
     form a parse tree. The leaves of the parse tree are defines in tree.py
 
     The parse function accepts an input string, and returns the parse tree.
 
-    Example::
-
-        input string:
-
-        int main(){
-          int a = 1;
-          return a + 2;
-        }
-
-        The lexical scanner converts to:
-
-        ["int", "main", "(", ")", "{", "}", "int", "a", "=", "a", "+", "1"]
-
-        The Parser converts this to:
-
-                              FunctionDefinition
-                                      |
-                                      v
-                                    Block
-                                    /   \
-                                   v     v
-                       [Declaration(a)] Return
-                                           \
-                                            v
-                                         Binary(+)
-                                          /     \
-                                         v       v
-                                   Variable(a) Constant(1)
-
     """
+
 
     def syntax_error(self, string):
 
