@@ -8,14 +8,28 @@ class CompilationUnit:
 
     """C source file root"""
 
-    def __init__(self, declarations, main):
+    def __init__(self, declarations, main, start_address):
         self.declarations = declarations
         self.main = main
+	self.start_address = start_address
 
     def generate_code(self):
         code_generator = cg.CodeGenerator()
         return code_generator.compilation_unit_generate_code(self)
 
+class String:
+
+    """string literal leaf"""
+
+    def __init__(self, constant, reserved):
+        self.constant = constant
+	self.reserved = reserved
+
+    def generate_code(self, code_generator):
+        return code_generator.string_generate_code(self)
+
+    def _type(self):
+        return "int*"
 
 class Constant:
 
@@ -335,6 +349,13 @@ class Ternary:
         else:
             return value(self.false_expression)
 
+def promote(left, right):
+    if left._type() == "float" and right._type() == "int":
+        return left, Convert(right, "float")
+    elif left._type() == "int" and right._type() == "float":
+        return Convert(left, "float"), right
+    else:
+	return left, right
 
 class Binary:
 
@@ -344,17 +365,17 @@ class Binary:
         self.left = constant_fold(left)
         self.right = constant_fold(right)
         self.function = function
+	self.left, self.right = promote(self.left, self.right)
+	self.operation_type_string = (
+            "{0} {1} {2}".format(
+                self.left._type(), 
+                self.function, 
+                self.right._type()
+            )
+        )
 
-        for i in ["float", "int"]:
-            if self.left._type() == i:
-                self.right = Convert(self.right, i)
-                break
-            elif self.right._type() == i:
-                self.left = Convert(self.left, i)
-                break
-
-        if self.left._type() != self.right._type():
-            raise CTypeError("incompatible types:" + left._type() + ", " + right._type())
+        #if self.left._type() != self.right._type():
+            #raise CTypeError("incompatible types:" + left._type() + ", " + right._type())
 
     def generate_code_reg(self, code_generator):
         return code_generator.binary_generate_code_reg(self)
@@ -363,116 +384,120 @@ class Binary:
         return code_generator.binary_generate_code(self)
 
     def value(self):
-        functions = {
-          "int" : {
-            "+"  : lambda x, y:x+y, 
-            "-"  : lambda x, y:x-y, 
-            "*"  : lambda x, y:x*y,
-            "/"  : c_style_division, 
-            "%"  : c_style_modulo, 
-            "<<" : lambda x, y:x<<y,
-            ">>" : lambda x, y:x>>y, 
-            "&"  : lambda x, y:x&y, 
-            "|"  : lambda x, y:x|y,
-            "^"  : lambda x, y:x^y, 
-            "==" : lambda x, y:x==y, 
-            "!=" : lambda x, y:x!=y, 
-            "<=" : lambda x, y:x<=y,
-            ">=" : lambda x, y:x>=y, 
-            "<"  : lambda x, y:x<y, 
-            ">"  : lambda x, y:x>y,
-          },
-          "float" : {
-            "+"  : lambda x, y:x+y, 
-            "-"  : lambda x, y:x-y, 
-            "*"  : lambda x, y:x*y,
-            "/"  : lambda x, y:x/y, 
-            "==" : lambda x, y:x==y, 
-            "!=" : lambda x, y:x!=y,
-            "<=" : lambda x, y:x<=y, 
-            ">=" : lambda x, y:x>=y, 
-            "<"  : lambda x, y:x<y,
-            ">"  : lambda x, y:x>y,
-          },
-          "int*" : {
-            "+"  : lambda x, y:x+y, 
-            "-"  : lambda x, y:x-y, 
-            "==" : lambda x, y:x==y, 
-            "!=" : lambda x, y:x!=y, 
-            "<=" : lambda x, y:x<=y, 
-            ">=" : lambda x, y:x>=y, 
-            "<"  : lambda x, y:x<y, 
-            ">"  : lambda x, y:x>y,
-          },
-          "float*" : {
-            "+"  : lambda x, y:x+y, 
-            "-"  : lambda x, y:x-y, 
-            "==" : lambda x, y:x==y, 
-            "!=" : lambda x, y:x!=y, 
-            "<=" : lambda x, y:x<=y, 
-            ">=" : lambda x, y:x>=y, 
-            "<"  : lambda x, y:x<y, 
-            ">"  : lambda x, y:x>y,
-          }
+	functions = {
+            "int + int"  : lambda x, y:x+y, 
+            "int - int"  : lambda x, y:x-y, 
+            "int * int"  : lambda x, y:x*y,
+            "int / int"  : c_style_division, 
+            "int % int"  : c_style_modulo, 
+            "int << int" : lambda x, y:x<<y,
+            "int >> int" : lambda x, y:x>>y, 
+            "int & int"  : lambda x, y:x&y, 
+            "int | int"  : lambda x, y:x|y,
+            "int ^ int"  : lambda x, y:x^y, 
+            "int == int" : lambda x, y:x==y, 
+            "int != int" : lambda x, y:x!=y, 
+            "int <= int" : lambda x, y:x<=y,
+            "int >= int" : lambda x, y:x>=y, 
+            "int < int"  : lambda x, y:x<y, 
+            "int > int"  : lambda x, y:x>y,
+
+            "int* + int" : lambda x, y:x+y, 
+            "int + int*" : lambda x, y:x+y, 
+            "int* - int" : lambda x, y:x-y, 
+            "int* - int*" : lambda x, y:x-y, 
+            "int* == int*" : lambda x, y:x==y, 
+            "int* != int*" : lambda x, y:x!=y, 
+            "int* <= int*" : lambda x, y:x<=y, 
+            "int* >= int*" : lambda x, y:x>=y, 
+            "int* < int*"  : lambda x, y:x<y, 
+            "int* > int*"  : lambda x, y:x>y,
+
+            "float + float"  : lambda x, y:x+y, 
+            "float - float"  : lambda x, y:x-y, 
+            "float * float"  : lambda x, y:x*y,
+            "float / float"  : lambda x, y:x/y, 
+            "float == float" : lambda x, y:x==y, 
+            "float != float" : lambda x, y:x!=y,
+            "float <= float" : lambda x, y:x<=y, 
+            "float >= float" : lambda x, y:x>=y, 
+            "float < float"  : lambda x, y:x<y,
+            "float > float"  : lambda x, y:x>y,
+
+            "float* + int" : lambda x, y:x+y, 
+            "int + float*" : lambda x, y:x+y, 
+            "float* - int" : lambda x, y:x-y, 
+            "float* - float*" : lambda x, y:x-y, 
+            "float* == float*" : lambda x, y:x==y, 
+            "float* != float*" : lambda x, y:x!=y, 
+            "float* <= float*" : lambda x, y:x<=y, 
+            "float* >= float*" : lambda x, y:x>=y, 
+            "float* < float*"  : lambda x, y:x<y, 
+            "float* > float*"  : lambda x, y:x>y,
         }
-        return functions[self.left._type()][self.function](value(self.left), value(self.right))
+	if self.operation_type_string not in functions:
+	    raise CTypeError("Invalid operation: {0}".format(self.operation_type_string))
+        return functions[self.operation_type_string](
+            value(self.left), value(self.right)
+        )
 
     def _type(self):
-        types = {
-          "int" : {
-            "+"  : "int", 
-            "-"  : "int", 
-            "*"  : "int", 
-            "/"  : "int", 
-            "%"  : "int", 
-            "<<" : "int", 
-            ">>" : "int", 
-            "&"  : "int", 
-            "|"  : "int", 
-            "^"  : "int", 
-            "&&" : "int",
-            "||" : "int", 
-            "==" : "int", 
-            "!=" : "int", 
-            "<=" : "int", 
-            ">=" : "int", 
-            "<"  : "int", 
-            ">"  : "int",
-          },
-          "float" : {
-            "+"  : "float", 
-            "-"  : "float", 
-            "*"  : "float", 
-            "/"  : "float", 
-            "==" : "int",
-            "!=" : "int",
-            "<=" : "int", 
-            ">=" : "int", 
-            "<"  : "int", 
-            ">"  : "int",
-          },
-          "int*" : {
-            "+"  : "int*", 
-            "-"  : "int*", 
-            "==" : "int", 
-            "!=" : "int", 
-            "<=" : "int", 
-            ">=" : "int", 
-            "<"  : "int", 
-            ">"  : "int",
-          },
-          "float*" : {
-            "+"  : "float*", 
-            "-"  : "float*", 
-            "==" : "int", 
-            "!=" : "int", 
-            "<=" : "int", 
-            ">=" : "int", 
-            "<"  : "int", 
-            ">"  : "int",
-          }
+	result_types = {
+            "int + int"  : "int", 
+            "int - int"  : "int", 
+            "int * int"  : "int", 
+            "int / int"  : "int", 
+            "int % int"  : "int", 
+            "int << int" : "int", 
+            "int >> int" : "int", 
+            "int & int"  : "int", 
+            "int | int"  : "int", 
+            "int ^ int"  : "int", 
+            "int && int" : "int",
+            "int || int" : "int", 
+            "int == int" : "int", 
+            "int != int" : "int", 
+            "int <= int" : "int", 
+            "int >= int" : "int", 
+            "int < int"  : "int", 
+            "int > int"  : "int",
+
+            "int* + int" : "int*", 
+            "int + int*" : "int*", 
+            "int* - int" : "int*", 
+            "int* - int*" : "int", 
+            "int* == int*" : "int", 
+            "int* != int*" : "int", 
+            "int* <= int*" : "int", 
+            "int* >= int*" : "int", 
+            "int* < int*"  : "int", 
+            "int* > int*"  : "int",
+
+            "float + float"  : "float", 
+            "float - float"  : "float", 
+            "float * float"  : "float", 
+            "float / float"  : "float", 
+            "float == float" : "int",
+            "float != float" : "int",
+            "float <= float" : "int", 
+            "float >= float" : "int", 
+            "float < float"  : "int", 
+            "float > float"  : "int",
+
+            "float* + int" : "float*", 
+            "int + float*" : "float*", 
+            "float* - int" : "float*", 
+            "float* - float*" : "int", 
+            "float* == float*" : "int", 
+            "float* != float*" : "int", 
+            "float* <= float*" : "int", 
+            "float* >= float*" : "int", 
+            "float* < float*"  : "int", 
+            "float* > float*"  : "int",
         }
-        return types[self.left._type()][self.function]
+	if self.operation_type_string not in result_types:
+	    raise CTypeError("Invalid operation: {0}".format(self.operation_type_string))
+        return result_types[self.operation_type_string]
 
 
 class Unary:
@@ -519,8 +544,8 @@ class PostDecrement:
 
     """post decrement expression leaf"""
 
-    def __init__(self, declarator):
-        self.declarator = declarator
+    def __init__(self, expression):
+        self.expression = expression
 
     def generate_code(self, code_generator):
         return code_generator.post_decrement_generate_code(self)

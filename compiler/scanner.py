@@ -72,6 +72,14 @@ class Tokenize:
                         tokens.append((token, lineno, charno))
                         token = ""
 
+                #character
+                elif token.startswith("'"):
+                    if char != "'" or (token.endswith("\\") and not token.endswith("\\\\")):
+                        token += char
+                    else:
+                        tokens.append((token, lineno, charno))
+                        token = ""
+
                 #operator
                 elif token in operators:
                     if token + char in operators:

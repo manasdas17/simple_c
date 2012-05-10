@@ -137,14 +137,30 @@ class CodeGenerator:
 
     def compilation_unit_generate_code(self, leaf):
         instructions = [
-            ("literal", end, 0, 0),
-            ("literal", start, 0, 0),
+            ("literal", end, 0, leaf.start_address),
+            ("literal", start, 0, leaf.start_address),
             ("jump and link", return_address, 0, leaf.main),
             ("label", "end", 0, 0),
             ("goto", 0, 0, "end"),
         ]
         for declaration in leaf.declarations:
             instructions.extend(declaration.generate_code(self))
+
+        return instructions
+
+    def string_generate_code(self, leaf):
+	instructions = [
+	    ("literal", offset, 0, leaf.reserved),
+            ("store", 0, end, offset),
+            ("addl", end, end, 1),
+	]
+
+	for char in leaf.constant:
+            instructions.extend([
+                ("literal", temp, 0, ord(char)),
+                ("store", 0, offset, temp),
+	        ("addl", offset, offset, 1),
+            ])
 
         return instructions
 
@@ -379,7 +395,7 @@ class CodeGenerator:
     def convert_generate_code_reg(self, leaf):
         instructions = self.generate_code_reg(leaf.expression)
         if leaf._type_ != leaf.expression._type():
-            instructions.append(("to_"+leaf.__type, 0, gpr, gpr))
+            instructions.append(("to_"+leaf._type_, 0, gpr, gpr))
         return instructions
 
     def ternary_generate_code(self, leaf):
@@ -444,12 +460,12 @@ class CodeGenerator:
             ("store", 0, end, temp),
             ("addl", end, end, 1),
         ])
-        instructions.extend(self.generate_code(leaf.expression))
+        instructions.extend(leaf.expression.generate_code_write(self))
         instructions.append(("addl", end, end, -1))
         return instructions
 
     def post_decrement_generate_code(self, leaf):
-        instructions = leaf.expression.generate_code(self)
+        instructions = self.generate_code(leaf.expression)
         instructions.extend([
             ("addl", end, end, -1),
             ("load", temp, end, 0),
@@ -524,7 +540,7 @@ class CodeGenerator:
     def address_generate_code(self, leaf):
         return leaf.expression.generate_code_address(self)
 
-    def derenference_generate_code(self, leaf):
+    def dereference_generate_code(self, leaf):
         instructions = leaf.expression.generate_code(self)
         instructions.extend([
             #pop

@@ -1,1 +1,7 @@
-int main(){int a=1, b=2, c=7, d=15; return a & b | c ^ d; }
+int main(){
+	int *console = 0xffffffff;
+	int *a;
+	a = "abcdef\n";
+	while(*a){*console = *(a++);}
+	return a;
+}

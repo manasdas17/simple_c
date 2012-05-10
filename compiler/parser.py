@@ -36,6 +36,7 @@ class Parser:
 
         self.scope = {}
         self.offset = 0
+        self.reserved = 0
         self.tokens = scanner.Tokenize(string)
 
         #try:
@@ -43,7 +44,7 @@ class Parser:
         while self.tokens.peek():
             global_declarations.append(self.parse_global_declaration())
         main = str(id(self.scope["main"]))
-        return CompilationUnit(global_declarations, main)
+        return CompilationUnit(global_declarations, main, self.reserved)
 
         #except CConstantError:
         #    self.syntax_error("Expression must be a constant")
@@ -586,7 +587,35 @@ class Parser:
             expression = self.parse_number()
         elif self.tokens.peek()[0].isalpha():
             expression = self.parse_identifier()
+        elif self.tokens.peek().startswith("'"):
+            expression = self.parse_char()
+        elif self.tokens.peek().startswith('"'):
+            expression = self.parse_string()
         return expression
+
+    def parse_char(self):
+
+        """Parse a character literal."""
+
+        number = self.tokens.pop()
+
+        return Constant(ord(number[1:]))
+
+    def parse_string(self):
+
+        """Parse a string literal."""
+
+        string = self.tokens.pop()
+        #get rid of leading quote
+	string = string[1:]
+        #expand escape sequences
+        string = eval('"{0}"'.format(string))
+        #append null char
+        string += '\x00'
+	#reserve some memory for the string
+	reserved = self.reserved
+        self.reserved += len(string)
+        return String(string, reserved)
 
     def parse_number(self):
 

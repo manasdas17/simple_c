@@ -1,5 +1,10 @@
+import sys
+
 from compiler.common import c_style_division, c_style_modulo
 from compiler.registers import *
+
+#Address Map
+console_address = 0xFFFFFFFF
 
 class Simulator:
     def __init__(self, instructions):
@@ -14,12 +19,18 @@ class Simulator:
 
         if operation == "load":
             address = self.registers[srca]
-            self.registers[dest] = self.memory[address]
+            if address == console_address:
+                self.registers[dest] = ord(sys.stdin.read())
+            else:
+                self.registers[dest] = self.memory[address]
             self.program_counter += 1
 
         elif operation == "store":
             address = self.registers[srca]
             self.memory[address] = self.registers[srcb]
+            if address == console_address:
+                sys.stdout.write(chr(self.registers[srcb]))
+                sys.stdout.flush()
             self.program_counter += 1
 
         elif operation in ["add", 'sub', 'mul', 'div', 'mod', 'lt', 'gt', 'lshift', 'rshift', 'le', 'ge', 'and', 'or', 'xor', 'eq', 'ne']:
