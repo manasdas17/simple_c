@@ -78,6 +78,9 @@ class Parser:
         self.offset = 0
         while not self.tokens.check(")"):
             arg_type = self.tokens.pop()
+            if self.tokens.check("*"):
+                arg_type += "*"
+                self.tokens.expect("*")
             argname = self.tokens.pop()
             declarator = Declarator(1, None, argname, self.offset, arg_type)
             self.scope[argname] = declarator
@@ -87,11 +90,11 @@ class Parser:
                 self.tokens.expect(",")
             else:
                 break
-        self.offset = stored_offset
         self.tokens.expect(")")
         node = DeclareFunction(args, _type)
         self.scope[name] = node
         node.define(self.parse_statement())
+        self.offset = stored_offset
         return node
 
     def parse_statement(self):

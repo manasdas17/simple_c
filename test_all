@@ -672,5 +672,42 @@ test(name = "pointer 8",
      }
      """
 )
+test(name = "pointer 9",
+     expected_return_value = 2,
+     code = """
+     int swap(int * a, int * b)
+     {
+        int temp = *a;
+        *a = *b;
+        *b = temp;
+        return 1;
+     }
+
+     int main(){
+        int a = 1, b = 2;
+        swap(&a, &b);
+        return a;
+     }
+     """
+)
+
+test(name = "pointer 10",
+     expected_return_value = 1,
+     code = """
+     int swap(int * a, int * b)
+     {
+        int temp = *a;
+        *a = *b;
+        *b = temp;
+        return 1;
+     }
+
+     int main(){
+        int a = 1, b = 2;
+        swap(&a, &b);
+        return b;
+     }
+     """
+)
 
 print "ALL TESTS PASS"

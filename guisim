@@ -10,14 +10,14 @@ import simulator.simulator as simulator
 import assembler.assembler as assembler
 
 description = {
-0 : "start",
-1 : "end",
-2 : "offset",
-3 : "new",
-4 : "temp",
-5 : "temp1",
-14 : "return_value",
-15 : "return_address"}
+26 : "start" ,
+25 : "end" ,
+26 : "offset" ,
+27 : "new" ,
+28 : "temp" ,
+29 : "temp1" ,
+30 : "return_value" ,
+31 : "return_address"}
 
 class BlockFrame(wx.Frame):
 
