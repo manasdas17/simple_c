@@ -26,15 +26,16 @@ class Parser:
 
         """Generate an Error message and exit"""
 
-        print string
-        print "at line", self.tokens.line(), ",", self.tokens.char()
-        exit(1)
+        raise CSyntaxError(
+            "{0}\nat line {1}, {2}".format(string, self.tokens.line(), self.tokens.char())
+        )
 
     def parse(self, string):
 
         """Parse the input file. Return the parse tree."""
 
-        self.scope = {}
+        self.scope = {} #A dictionary of all currently visible objects
+        self._locals = [] #A list of localy declared objects
         self.offset = 0
         self.reserved = 0
         self.tokens = scanner.Tokenize(string)
@@ -146,6 +147,8 @@ class Parser:
         #scope is restored.
 
         stored_scope = copy.copy(self.scope)
+        stored_locals = copy.copy(self._locals)
+        self._locals = []
         self.tokens.expect("{")
         declarations = []
         while self.tokens.peek() in types:
@@ -156,6 +159,7 @@ class Parser:
             statements.append(self.parse_statement())
         self.tokens.expect("}")
         self.scope = stored_scope
+        self._locals = stored_locals
         return Block(declarations, statements)
 
     def parse_if(self):
@@ -310,6 +314,13 @@ class Parser:
             initialise = self.parse_assignment_expression()
         else:
             initialise = None
+
+        #check for redeclaration
+        if name in self._locals:
+            self.syntax_error("Redefinition of {0}".format(name))
+        else:
+            self._locals.append(name)
+
         declarator = Declarator(1, initialise, name, self.offset, _type)
         self.scope[name] = declarator
         self.offset += 1
@@ -610,13 +621,13 @@ class Parser:
 
         string = self.tokens.pop()
         #get rid of leading quote
-	string = string[1:]
+        string = string[1:]
         #expand escape sequences
         string = eval('"{0}"'.format(string))
         #append null char
         string += '\x00'
-	#reserve some memory for the string
-	reserved = self.reserved
+        #reserve some memory for the string
+        reserved = self.reserved
         self.reserved += len(string)
         return String(string, reserved)
 

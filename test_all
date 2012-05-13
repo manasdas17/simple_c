@@ -5,26 +5,41 @@ import sys
 import compiler.parser as parser
 import compiler.optimizer as optimizer
 import compiler.registers as registers
+import compiler.exceptions as exceptions
 import simulator.simulator as simulator
 import assembler.assembler as assembler
 
-def test(name, expected_return_value, code):
-        theparser = parser.Parser()
-        instructions = theparser.parse(code).generate_code()
-        instructions = optimizer.optimize(instructions)
-        instructions = assembler.assemble(instructions)
-        thesimulator = simulator.Simulator(instructions)
 
-        while thesimulator.program_counter != 3:
-            thesimulator.execute()
+def test(name, code, expected_return_value=None, expected_error=None):
 
-        if thesimulator.registers[registers.return_value] == expected_return_value:
-            print name, "...pass"
-        else:
-            print name, "...fail"
-            print "expected:", expected_return_value, "actual:", thesimulator.registers[registers.return_value]
-            print "ALL TESTS FAIL"
-            exit(0)
+        expected_error_seen = False
+        try:
+
+            theparser = parser.Parser()
+            instructions = theparser.parse(code).generate_code()
+            instructions = optimizer.optimize(instructions)
+            instructions = assembler.assemble(instructions)
+            thesimulator = simulator.Simulator(instructions)
+            while thesimulator.program_counter != 3:
+                thesimulator.execute()
+
+        except exceptions.CSyntaxError:
+            expected_error_seen = True
+
+        if expected_return_value:
+            if thesimulator.registers[registers.return_value] != expected_return_value:
+                print name, "...fail"
+                print "expected:", expected_return_value, "actual:", thesimulator.registers[registers.return_value]
+                print "ALL TESTS FAIL"
+                exit(0)
+        elif expected_error:
+            if not expected_error_seen:
+                print name, "...fail"
+                print "expected:", expected_error
+                print "ALL TESTS FAIL"
+                exit(0)
+
+        print name, "...pass"
 
 test(name = "integer literal 1",
      expected_return_value = 0,
@@ -706,6 +721,17 @@ test(name = "pointer 10",
         int a = 1, b = 2;
         swap(&a, &b);
         return b;
+     }
+     """
+)
+
+test(name = "error 1",
+     expected_error = exceptions.CSyntaxError,
+     code = """
+     int main(){
+        int a = 1;
+        /*int a;*/
+        return a;
      }
      """
 )
